@@ -216,7 +216,28 @@ export async function POST(request: NextRequest) {
 
     // --- 1. Create adapter and parse the incoming message ---
     const adapter = createWhatsAppAdapter();
-    const message: WhatsAppMessage | null = adapter.parseWebhook(body);
+    let message: WhatsAppMessage | null = adapter.parseWebhook(body);
+
+    // Fallback: accept generic test format { phone, text } or { from, body }
+    if (!message || !message.text) {
+      const data = body as Record<string, unknown>;
+      const fallbackFrom =
+        (data.phone as string) ??
+        (data.from as string) ??
+        ((data.message as Record<string, unknown>)?.from as string);
+      const fallbackText =
+        (data.text as string) ??
+        (data.body as string) ??
+        ((data.message as Record<string, unknown>)?.body as string);
+
+      if (fallbackFrom && fallbackText) {
+        message = {
+          from: fallbackFrom,
+          text: fallbackText,
+          timestamp: new Date(),
+        };
+      }
+    }
 
     if (!message || !message.text) {
       // No actionable message (media-only, status update, etc.) — acknowledge silently
