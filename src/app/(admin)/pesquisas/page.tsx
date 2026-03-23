@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -9,7 +10,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ClipboardList } from "lucide-react";
+import { ClipboardList, Loader2 } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 
 interface Pesquisa {
   id: string;
@@ -19,9 +21,6 @@ interface Pesquisa {
   feedback: string;
   data: string;
 }
-
-// Mock data — empty state
-const mockPesquisas: Pesquisa[] = [];
 
 function StarRating({ rating }: { rating: number }) {
   return (
@@ -36,6 +35,56 @@ function StarRating({ rating }: { rating: number }) {
 }
 
 export default function PesquisasPage() {
+  const [pesquisas, setPesquisas] = useState<Pesquisa[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchPesquisas() {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from('pesquisas')
+          .select('*, usuarios(name), pacotes(name)')
+          .order('created_at', { ascending: false });
+
+        if (error) {
+          console.error('Erro ao buscar pesquisas:', error);
+          setPesquisas([]);
+          return;
+        }
+
+        const mapped: Pesquisa[] = (data ?? []).map((p: any) => ({
+          id: p.id,
+          usuario: p.usuarios?.name ?? '',
+          pacote: p.pacotes?.name ?? '',
+          avaliacao: p.rating ?? p.avaliacao ?? 3,
+          feedback: p.feedback ?? '',
+          data: p.created_at
+            ? new Date(p.created_at).toLocaleDateString('pt-BR')
+            : '',
+        }));
+
+        setPesquisas(mapped);
+      } catch (err) {
+        console.error('Erro ao buscar pesquisas:', err);
+        setPesquisas([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchPesquisas();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <span className="ml-2 text-sm text-muted-foreground">Carregando pesquisas...</span>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <Card>
@@ -43,7 +92,7 @@ export default function PesquisasPage() {
           <CardTitle className="text-base">Pesquisas</CardTitle>
         </CardHeader>
         <CardContent>
-          {mockPesquisas.length === 0 ? (
+          {pesquisas.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
                 <ClipboardList className="h-5 w-5 text-muted-foreground" />
@@ -68,7 +117,7 @@ export default function PesquisasPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {mockPesquisas.map((pesquisa) => (
+                  {pesquisas.map((pesquisa) => (
                     <TableRow key={pesquisa.id}>
                       <TableCell className="font-medium">
                         {pesquisa.usuario}

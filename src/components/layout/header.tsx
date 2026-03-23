@@ -25,6 +25,7 @@ export function Header({ title }: HeaderProps) {
   const supabase = createClient();
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [initials, setInitials] = useState("...");
+  const [loggingOut, setLoggingOut] = useState(false);
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -41,9 +42,15 @@ export function Header({ title }: HeaderProps) {
   }, [supabase]);
 
   const handleLogout = async () => {
-    await fetch("/api/auth/logout", { method: "POST" });
-    await supabase.auth.signOut();
-    window.location.href = "/login";
+    try {
+      setLoggingOut(true);
+      await fetch("/api/auth/logout", { method: "POST" });
+      await supabase.auth.signOut();
+      window.location.replace("/login");
+    } catch (error) {
+      console.error("Erro ao sair:", error);
+      setLoggingOut(false);
+    }
   };
 
   return (
@@ -72,17 +79,21 @@ export function Header({ title }: HeaderProps) {
               </DropdownMenuGroup>
             )}
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="cursor-pointer">
+            <DropdownMenuItem
+              className="cursor-pointer"
+              onSelect={() => router.push("/perfil")}
+            >
               <User className="mr-2 h-4 w-4" />
               Perfil
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               className="cursor-pointer text-destructive"
+              disabled={loggingOut}
               onSelect={handleLogout}
             >
               <LogOut className="mr-2 h-4 w-4" />
-              Sair
+              {loggingOut ? "Saindo..." : "Sair"}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -12,7 +12,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Users, Search } from "lucide-react";
+import { Users, Search, Loader2 } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 
 type UserStatus = "ativo" | "inativo";
 
@@ -37,17 +38,63 @@ const statusConfig: Record<UserStatus, { label: string; className: string }> =
     },
   };
 
-// Mock data — empty state
-const mockUsers: Usuario[] = [];
-
 export default function AlunosPage() {
   const [search, setSearch] = useState("");
+  const [usuarios, setUsuarios] = useState<Usuario[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const filtered = mockUsers.filter(
+  useEffect(() => {
+    async function fetchUsuarios() {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from('usuarios')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (error) {
+          console.error('Erro ao buscar usuários:', error);
+          setUsuarios([]);
+          return;
+        }
+
+        const mapped: Usuario[] = (data ?? []).map((u: any) => ({
+          id: u.id,
+          nome: u.name ?? u.nome ?? '',
+          telefone: u.phone ?? u.telefone ?? '',
+          status: u.status ?? 'ativo',
+          registradoEm: u.created_at
+            ? new Date(u.created_at).toLocaleDateString('pt-BR')
+            : '',
+          progresso: u.progress ?? u.progresso ?? '—',
+        }));
+
+        setUsuarios(mapped);
+      } catch (err) {
+        console.error('Erro ao buscar usuários:', err);
+        setUsuarios([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchUsuarios();
+  }, []);
+
+  const filtered = usuarios.filter(
     (s) =>
       s.nome.toLowerCase().includes(search.toLowerCase()) ||
       s.telefone.includes(search)
   );
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <span className="ml-2 text-sm text-muted-foreground">Carregando usuários...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -67,7 +114,7 @@ export default function AlunosPage() {
           <CardTitle className="text-base">Usuários</CardTitle>
         </CardHeader>
         <CardContent>
-          {filtered.length === 0 && mockUsers.length === 0 ? (
+          {filtered.length === 0 && usuarios.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
                 <Users className="h-5 w-5 text-muted-foreground" />
@@ -113,7 +160,7 @@ export default function AlunosPage() {
                       </TableRow>
                     );
                   })}
-                  {filtered.length === 0 && mockUsers.length > 0 && (
+                  {filtered.length === 0 && usuarios.length > 0 && (
                     <TableRow>
                       <TableCell
                         colSpan={5}

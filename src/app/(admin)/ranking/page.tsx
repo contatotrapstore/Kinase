@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -11,7 +11,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Trophy } from "lucide-react";
+import { Trophy, Loader2 } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 
 interface RankEntry {
   posicao: number;
@@ -22,14 +23,10 @@ interface RankEntry {
   percentual: string;
 }
 
-const mockBankOptions = [
-  { value: "", label: "Todos os bancos" },
-  { value: "1", label: "Prova de Anatomia 2024.1" },
-  { value: "2", label: "Farmacologia - Módulo 1" },
-];
-
-// Mock data — empty state
-const mockRanking: RankEntry[] = [];
+interface BankOption {
+  value: string;
+  label: string;
+}
 
 const positionBadge = (pos: number) => {
   if (pos === 1)
@@ -59,6 +56,77 @@ const positionBadge = (pos: number) => {
 
 export default function RankingPage() {
   const [bankFilter, setBankFilter] = useState("");
+  const [ranking, setRanking] = useState<RankEntry[]>([]);
+  const [bankOptions, setBankOptions] = useState<BankOption[]>([
+    { value: "", label: "Todos os bancos" },
+  ]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const supabase = createClient();
+
+        // Fetch pacotes for filter options
+        const { data: pacotes, error: pacotesError } = await supabase
+          .from('pacotes')
+          .select('id, name')
+          .order('name');
+
+        if (!pacotesError && pacotes) {
+          setBankOptions([
+            { value: "", label: "Todos os bancos" },
+            ...pacotes.map((p: any) => ({
+              value: p.id,
+              label: p.name ?? '',
+            })),
+          ]);
+        }
+
+        // Fetch rankings
+        const { data, error } = await supabase
+          .from('rankings')
+          .select('*, usuarios(name, phone), pacotes(name)')
+          .order('total_score', { ascending: false });
+
+        if (error) {
+          console.error('Erro ao buscar ranking:', error);
+          setRanking([]);
+          return;
+        }
+
+        const mapped: RankEntry[] = (data ?? []).map((r: any, index: number) => ({
+          posicao: index + 1,
+          nome: r.usuarios?.name ?? '',
+          pontuacao: r.total_score ?? 0,
+          acertos: r.correct_answers ?? 0,
+          total: r.total_answers ?? 0,
+          percentual:
+            r.total_answers && r.total_answers > 0
+              ? `${Math.round((r.correct_answers / r.total_answers) * 100)}%`
+              : '0%',
+        }));
+
+        setRanking(mapped);
+      } catch (err) {
+        console.error('Erro ao buscar ranking:', err);
+        setRanking([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchData();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <span className="ml-2 text-sm text-muted-foreground">Carregando ranking...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -69,7 +137,7 @@ export default function RankingPage() {
           onChange={(e) => setBankFilter(e.target.value)}
           className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         >
-          {mockBankOptions.map((opt) => (
+          {bankOptions.map((opt) => (
             <option key={opt.value} value={opt.value}>
               {opt.label}
             </option>
@@ -82,7 +150,7 @@ export default function RankingPage() {
           <CardTitle className="text-base">Ranking</CardTitle>
         </CardHeader>
         <CardContent>
-          {mockRanking.length === 0 ? (
+          {ranking.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
                 <Trophy className="h-5 w-5 text-muted-foreground" />
@@ -108,7 +176,7 @@ export default function RankingPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {mockRanking.map((entry) => (
+                  {ranking.map((entry) => (
                     <TableRow
                       key={entry.posicao}
                       className={

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +13,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { BookOpen, Plus, Eye } from "lucide-react";
+import { BookOpen, Plus, Eye, Loader2 } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 
 type BankStatus = "pendente" | "processando" | "pronto" | "erro";
 
@@ -48,10 +50,58 @@ const statusConfig: Record<
   },
 };
 
-// Mock data — empty state
-const mockBanks: QuestionBank[] = [];
-
 export default function BancosPage() {
+  const [banks, setBanks] = useState<QuestionBank[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchBanks() {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from('pacotes')
+          .select('*, areas_conhecimento(name)')
+          .order('created_at', { ascending: false });
+
+        if (error) {
+          console.error('Erro ao buscar pacotes:', error);
+          setBanks([]);
+          return;
+        }
+
+        const mapped: QuestionBank[] = (data ?? []).map((p: any) => ({
+          id: p.id,
+          nome: p.name ?? p.nome ?? '',
+          materia: p.areas_conhecimento?.name ?? p.area ?? '',
+          questoes: p.total_questions ?? p.questoes ?? 0,
+          tamanho: p.size ?? p.tamanho ?? 10,
+          status: p.status ?? 'pendente',
+          data: p.created_at
+            ? new Date(p.created_at).toLocaleDateString('pt-BR')
+            : '',
+        }));
+
+        setBanks(mapped);
+      } catch (err) {
+        console.error('Erro ao buscar pacotes:', err);
+        setBanks([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchBanks();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <span className="ml-2 text-sm text-muted-foreground">Carregando pacotes...</span>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -69,7 +119,7 @@ export default function BancosPage() {
           <CardTitle className="text-base">Pacotes</CardTitle>
         </CardHeader>
         <CardContent>
-          {mockBanks.length === 0 ? (
+          {banks.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
                 <BookOpen className="h-5 w-5 text-muted-foreground" />
@@ -102,7 +152,7 @@ export default function BancosPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {mockBanks.map((bank) => {
+                  {banks.map((bank) => {
                     const status = statusConfig[bank.status];
                     return (
                       <TableRow key={bank.id}>

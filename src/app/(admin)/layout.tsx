@@ -10,6 +10,7 @@ const pageTitles: Record<string, string> = {
   "/alunos": "Usuários",
   "/ranking": "Ranking",
   "/pesquisas": "Pesquisas",
+  "/perfil": "Perfil",
 };
 
 function getTitle(pathname: string): string {
