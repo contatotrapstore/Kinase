@@ -51,27 +51,7 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         {/* Branding */}
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center">
-            <svg
-              width="48"
-              height="48"
-              viewBox="0 0 48 48"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <rect width="48" height="48" rx="12" fill="#0d9488" />
-              <path
-                d="M16 12v24M16 24l10-12M16 24l10 12"
-                stroke="white"
-                strokeWidth="3.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </div>
-          <h1 className="text-xl font-semibold text-foreground">
-            Kinase
-          </h1>
+          <img src="/logo.svg" alt="Kinase" className="mx-auto mb-2 h-10" />
           <p className="mt-1 text-sm text-muted-foreground">
             Plataforma de Aprendizagem Médica
           </p>
@@ -143,7 +123,7 @@ export default function LoginPage() {
         </Card>
 
         <p className="mt-4 text-center text-xs text-muted-foreground">
-          Powered by microlearning
+          © 2026 Kinase
         </p>
       </div>
     </div>

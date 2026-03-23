@@ -1,19 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { MobileSidebar } from "./sidebar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { User, LogOut } from "lucide-react";
 
 interface HeaderProps {
@@ -26,6 +17,8 @@ export function Header({ title }: HeaderProps) {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [initials, setInitials] = useState("...");
   const [loggingOut, setLoggingOut] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -40,6 +33,16 @@ export function Header({ title }: HeaderProps) {
     };
     fetchUser();
   }, [supabase]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const handleLogout = async () => {
     try {
@@ -59,44 +62,47 @@ export function Header({ title }: HeaderProps) {
 
       <h1 className="text-lg font-semibold text-foreground">{title}</h1>
 
-      <div className="ml-auto flex items-center gap-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger className="cursor-pointer rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <Avatar className="h-8 w-8">
-              <AvatarFallback className="bg-primary/10 text-primary text-xs font-medium">
-                {initials}
-              </AvatarFallback>
-            </Avatar>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
+      <div className="ml-auto relative" ref={menuRef}>
+        <button
+          onClick={() => setMenuOpen(!menuOpen)}
+          className="cursor-pointer rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Avatar className="h-8 w-8">
+            <AvatarFallback className="bg-primary/10 text-primary text-xs font-medium">
+              {initials}
+            </AvatarFallback>
+          </Avatar>
+        </button>
+
+        {menuOpen && (
+          <div className="absolute right-0 mt-2 w-56 rounded-lg border border-border bg-popover p-1 shadow-md z-50">
             {userEmail && (
-              <DropdownMenuGroup>
-                <DropdownMenuLabel className="font-normal">
-                  <p className="text-xs text-muted-foreground truncate">
-                    {userEmail}
-                  </p>
-                </DropdownMenuLabel>
-              </DropdownMenuGroup>
+              <div className="px-2 py-1.5">
+                <p className="text-xs text-muted-foreground truncate">{userEmail}</p>
+              </div>
             )}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="cursor-pointer"
-              onSelect={() => router.push("/perfil")}
+            <div className="h-px bg-border my-1" />
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                router.push("/perfil");
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground cursor-pointer"
             >
-              <User className="mr-2 h-4 w-4" />
+              <User className="h-4 w-4" />
               Perfil
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="cursor-pointer text-destructive"
+            </button>
+            <div className="h-px bg-border my-1" />
+            <button
+              onClick={handleLogout}
               disabled={loggingOut}
-              onSelect={handleLogout}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10 cursor-pointer disabled:opacity-50"
             >
-              <LogOut className="mr-2 h-4 w-4" />
+              <LogOut className="h-4 w-4" />
               {loggingOut ? "Saindo..." : "Sair"}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+            </button>
+          </div>
+        )}
       </div>
     </header>
   );
