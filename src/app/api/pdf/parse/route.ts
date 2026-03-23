@@ -7,7 +7,12 @@ import { parsePdfText } from "@/lib/pdf/parser";
  */
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'JSON inválido no corpo da requisição' }, { status: 400 });
+    }
     const { text } = body;
 
     if (!text || typeof text !== "string") {

@@ -135,7 +135,7 @@ export default function UploadPage() {
   };
 
   const handleSave = () => {
-    alert("Questoes extraidas com sucesso!");
+    alert("Questões extraídas com sucesso!");
   };
 
   const handleBack = () => {
@@ -151,17 +151,17 @@ export default function UploadPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <CheckCircle2 className="h-5 w-5 text-green-600" />
-              Questoes Extraidas
+              Questões Extraídas
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
               <span>
-                <strong>{parseResult.count}</strong> questoes encontradas
+                <strong>{parseResult.count}</strong> questões encontradas
               </span>
               {parseResult.areas.length > 0 && (
                 <span>
-                  Areas: {parseResult.areas.join(", ")}
+                  Áreas: {parseResult.areas.join(", ")}
                 </span>
               )}
             </div>
@@ -180,7 +180,7 @@ export default function UploadPage() {
                           {q.order}
                         </span>
                         <span className="text-xs text-muted-foreground">
-                          {q.options.length} opcoes
+                          {q.options.length} opções
                         </span>
                         {q.hasImage && (
                           <span className="rounded bg-yellow-100 px-1.5 py-0.5 text-xs text-yellow-700">
@@ -201,7 +201,7 @@ export default function UploadPage() {
 
             {parseResult.count === 0 && (
               <p className="text-center text-sm text-muted-foreground">
-                Nenhuma questao detectada no texto. Verifique a formatacao do PDF.
+                Nenhuma questão detectada no texto. Verifique a formatação do PDF.
               </p>
             )}
 
@@ -309,7 +309,7 @@ export default function UploadPage() {
               </Label>
               <textarea
                 id="pastedText"
-                placeholder="Cole aqui o texto extraido do PDF..."
+                placeholder="Cole aqui o texto extraído do PDF..."
                 value={pastedText}
                 onChange={(e) => {
                   setPastedText(e.target.value);
@@ -326,7 +326,7 @@ export default function UploadPage() {
             {/* Subject select */}
             <div>
               <Label htmlFor="subject" className="mb-2 block">
-                Materia
+                Matéria
               </Label>
               <select
                 id="subject"
@@ -334,7 +334,7 @@ export default function UploadPage() {
                 onChange={(e) => setSubject(e.target.value)}
                 className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
               >
-                <option value="">Selecione uma materia</option>
+                <option value="">Selecione uma matéria</option>
                 {mockSubjects.map((s) => (
                   <option key={s} value={s}>
                     {s}
@@ -346,7 +346,7 @@ export default function UploadPage() {
             {/* Bank name */}
             <div>
               <Label htmlFor="bankName" className="mb-2 block">
-                Nome do Banco de Questoes
+                Nome do Banco de Questões
               </Label>
               <Input
                 id="bankName"

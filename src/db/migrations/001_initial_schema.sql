@@ -138,11 +138,13 @@ create index idx_progresso_usuario_status     on progresso_usuario(status);
 create index idx_respostas_usuario_id  on respostas(usuario_id);
 create index idx_respostas_questao_id  on respostas(questao_id);
 create index idx_respostas_answered_at on respostas(answered_at);
+create index idx_respostas_retry       on respostas(usuario_id, questao_id, was_retry);
 
 -- rankings
-create index idx_rankings_usuario_id  on rankings(usuario_id);
-create index idx_rankings_pacote_id   on rankings(pacote_id);
-create index idx_rankings_total_score on rankings(total_score desc);
+create index idx_rankings_usuario_id      on rankings(usuario_id);
+create index idx_rankings_pacote_id       on rankings(pacote_id);
+create index idx_rankings_total_score     on rankings(total_score desc);
+create index idx_rankings_total_answered  on rankings(total_answered);
 
 -- usuarios
 create index idx_usuarios_phone on usuarios(phone);

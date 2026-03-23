@@ -209,6 +209,16 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
 
+    // Validate webhook secret if configured
+    const webhookSecret = env.WHATSAPP_WEBHOOK_SECRET;
+    if (webhookSecret) {
+      const headerSecret = request.headers.get('x-webhook-secret') ??
+                           request.headers.get('authorization')?.replace('Bearer ', '');
+      if (headerSecret !== webhookSecret) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+    }
+
     console.log(
       "[webhook] Payload recebido:",
       JSON.stringify(body).slice(0, 300)
@@ -499,6 +509,7 @@ async function sendCurrentQuestion(
 
   if (!questionData || options.length === 0) {
     console.error(`[webhook] Questão ${questionId} não encontrada`);
+    await adapter.sendText(phone, 'Erro ao carregar questão. Envie /start para recomeçar.');
     return;
   }
 
@@ -524,6 +535,12 @@ async function sendCurrentQuestion(
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const challenge = searchParams.get("hub.challenge");
+
+  // Validate verify_token if present
+  const verifyToken = searchParams.get('hub.verify_token');
+  if (verifyToken && verifyToken !== env.WHATSAPP_WEBHOOK_SECRET) {
+    return new NextResponse('Forbidden', { status: 403 });
+  }
 
   // Meta/WABA webhook verification
   if (challenge) {

@@ -43,7 +43,7 @@ export default function LoginPage() {
             Kinase
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Plataforma de Aprendizagem Medica
+            Plataforma de Aprendizagem Médica
           </p>
         </div>
 

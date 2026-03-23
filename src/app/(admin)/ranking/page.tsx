@@ -91,7 +91,7 @@ export default function RankingPage() {
                 Nenhum dado no ranking
               </p>
               <p className="mt-1 text-xs text-muted-foreground/70">
-                O ranking será preenchido quando alunos responderem questões
+                O ranking será preenchido quando usuários responderem questões
               </p>
             </div>
           ) : (

@@ -9,7 +9,12 @@ import { PDFParse } from "pdf-parse";
  */
 export async function POST(request: NextRequest) {
   try {
-    const formData = await request.formData();
+    let formData;
+    try {
+      formData = await request.formData();
+    } catch {
+      return NextResponse.json({ error: 'FormData inválido na requisição' }, { status: 400 });
+    }
     const file = formData.get("file") as File | null;
 
     if (!file) {

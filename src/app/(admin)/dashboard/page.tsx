@@ -31,11 +31,11 @@ import {
 
 const stats = [
   {
-    label: "Total Usuarios",
+    label: "Total Usuários",
     value: "47",
     icon: Users,
     color: "text-blue-600 bg-blue-100",
-    trend: "+5 este mes",
+    trend: "+5 este mês",
   },
   {
     label: "Pacotes",
@@ -45,7 +45,7 @@ const stats = [
     trend: "Cardiologia, Cirurgia, Pediatria",
   },
   {
-    label: "Questoes",
+    label: "Questões",
     value: "150",
     icon: HelpCircle,
     color: "text-violet-600 bg-violet-100",
@@ -56,7 +56,7 @@ const stats = [
     value: "78.3%",
     icon: TrendingUp,
     color: "text-amber-600 bg-amber-100",
-    trend: "+2.1% vs. mes anterior",
+    trend: "+2.1% vs. mês anterior",
   },
 ];
 
@@ -67,7 +67,7 @@ const recentActivities = [
     iconColor: "text-emerald-600 bg-emerald-100",
     text: "Dr. Marina Silva completou Pacote Cardiologia",
     detail: "87% acerto",
-    time: "ha 2 horas",
+    time: "há 2 horas",
   },
   {
     id: 2,
@@ -75,23 +75,23 @@ const recentActivities = [
     iconColor: "text-blue-600 bg-blue-100",
     text: "Dr. Carlos Mendes iniciou Pacote Pediatria",
     detail: null,
-    time: "ha 5 horas",
+    time: "há 5 horas",
   },
   {
     id: 3,
     icon: ClipboardList,
     iconColor: "text-violet-600 bg-violet-100",
-    text: "Dr. Ana Costa respondeu 20 questoes",
+    text: "Dr. Ana Costa respondeu 20 questões",
     detail: "Cirurgia",
-    time: "ha 8 horas",
+    time: "há 8 horas",
   },
   {
     id: 4,
     icon: Medal,
     iconColor: "text-amber-600 bg-amber-100",
-    text: "Dr. Pedro Lima alcancou Top 3 no ranking",
+    text: "Dr. Pedro Lima alcançou Top 3 no ranking",
     detail: null,
-    time: "ha 1 dia",
+    time: "há 1 dia",
   },
   {
     id: 5,
@@ -99,7 +99,7 @@ const recentActivities = [
     iconColor: "text-rose-600 bg-rose-100",
     text: "Dr. Juliana Rocha fez upload de novo PDF",
     detail: null,
-    time: "ha 1 dia",
+    time: "há 1 dia",
   },
 ];
 
