@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 40">
+  <!-- K monogram in rounded square -->
+  <rect x="2" y="4" width="32" height="32" rx="7" ry="7" fill="#0d9488"/>
+  <!-- Stylized K with molecular/enzyme feel -->
+  <g transform="translate(10, 12)" fill="white">
+    <!-- Vertical stroke -->
+    <rect x="0" y="0" width="3.2" height="16" rx="1"/>
+    <!-- Upper diagonal -->
+    <rect x="3" y="0" width="3.2" height="11" rx="1" transform="rotate(-50, 3, 8)"/>
+    <!-- Lower diagonal -->
+    <rect x="3" y="8" width="3.2" height="11" rx="1" transform="rotate(50, 3, 8)"/>
+    <!-- Molecular dot accents -->
+    <circle cx="14.5" cy="0.5" r="1.5" opacity="0.7"/>
+    <circle cx="14.5" cy="15.5" r="1.5" opacity="0.7"/>
+  </g>
+  <!-- Kinase text -->
+  <text x="42" y="27" font-family="system-ui, -apple-system, sans-serif" font-weight="600" font-size="22" fill="#1a1a2e" letter-spacing="-0.5">Kinase</text>
+</svg>
