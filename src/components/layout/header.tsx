@@ -8,6 +8,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -62,15 +63,15 @@ export function Header({ title }: HeaderProps) {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
             {userEmail && (
-              <>
+              <DropdownMenuGroup>
                 <DropdownMenuLabel className="font-normal">
                   <p className="text-xs text-muted-foreground truncate">
                     {userEmail}
                   </p>
                 </DropdownMenuLabel>
-                <DropdownMenuSeparator />
-              </>
+              </DropdownMenuGroup>
             )}
+            <DropdownMenuSeparator />
             <DropdownMenuItem className="cursor-pointer">
               <User className="mr-2 h-4 w-4" />
               Perfil
@@ -78,7 +79,7 @@ export function Header({ title }: HeaderProps) {
             <DropdownMenuSeparator />
             <DropdownMenuItem
               className="cursor-pointer text-destructive"
-              onClick={handleLogout}
+              onSelect={handleLogout}
             >
               <LogOut className="mr-2 h-4 w-4" />
               Sair
