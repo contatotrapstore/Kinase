@@ -50,8 +50,9 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(135deg,oklch(0.97_0.014_172/30%),oklch(0.985_0.002_247),oklch(0.93_0.032_172/20%))] px-4">
       <div className="w-full max-w-sm">
         {/* Branding */}
-        <div className="mb-8 text-center">
-          <img src="/logo.svg" alt="Kinase" className="mx-auto mb-2 h-10" />
+        <div className="mb-8 flex flex-col items-center text-center">
+          <img src="/logo-icon.svg" alt="Kinase" className="mb-3 h-12 w-12" />
+          <h1 className="text-xl font-semibold text-foreground">Kinase</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Plataforma de Aprendizagem Médica
           </p>
