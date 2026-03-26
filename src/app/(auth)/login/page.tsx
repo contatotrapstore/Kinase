@@ -7,13 +7,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { LogIn } from "lucide-react";
+import { LogIn, ArrowLeft, Mail } from "lucide-react";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [forgotMode, setForgotMode] = useState(false);
   const router = useRouter();
 
   const supabase = createBrowserClient(
@@ -21,7 +23,7 @@ export default function LoginPage() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setLoading(true);
@@ -33,7 +35,7 @@ export default function LoginPage() {
       });
 
       if (error) {
-        setError(error.message || "Email ou senha incorretos");
+        setError("Email ou senha incorretos");
         return;
       }
 
@@ -41,6 +43,30 @@ export default function LoginPage() {
       router.refresh();
     } catch {
       setError("Email ou senha incorretos");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+    setLoading(true);
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/login`,
+      });
+
+      if (error) {
+        setError("Erro ao enviar email de recuperação. Tente novamente.");
+        return;
+      }
+
+      setSuccess("Email de recuperação enviado! Verifique sua caixa de entrada.");
+    } catch {
+      setError("Erro ao enviar email de recuperação.");
     } finally {
       setLoading(false);
     }
@@ -60,66 +86,126 @@ export default function LoginPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-center text-base">Entrar</CardTitle>
+            <CardTitle className="text-center text-base">
+              {forgotMode ? "Recuperar Senha" : "Entrar"}
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <Label htmlFor="email" className="mb-2 block">
-                  Email
-                </Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="admin@exemplo.com"
-                  autoComplete="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  disabled={loading}
-                  required
-                />
-              </div>
+            {forgotMode ? (
+              <form onSubmit={handleResetPassword} className="space-y-4">
+                <p className="text-xs text-muted-foreground text-center">
+                  Digite seu email e enviaremos um link para redefinir sua senha.
+                </p>
+                <div>
+                  <Label htmlFor="reset-email" className="mb-2 block">
+                    Email
+                  </Label>
+                  <Input
+                    id="reset-email"
+                    type="email"
+                    placeholder="seu@email.com"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    disabled={loading}
+                    required
+                  />
+                </div>
 
-              <div>
-                <Label htmlFor="password" className="mb-2 block">
-                  Senha
-                </Label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="••••••••"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  disabled={loading}
-                  required
-                />
-              </div>
-
-              {error && (
-                <p className="text-sm text-red-500">{error}</p>
-              )}
-
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? (
-                  "Entrando..."
-                ) : (
-                  <>
-                    <LogIn className="mr-2 h-4 w-4" />
-                    Entrar
-                  </>
+                {error && (
+                  <p className="text-sm text-red-500">{error}</p>
                 )}
-              </Button>
+                {success && (
+                  <p className="text-sm text-emerald-600">{success}</p>
+                )}
 
-              <p className="text-center">
-                <a
-                  href="#"
-                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                <Button type="submit" className="w-full" disabled={loading}>
+                  {loading ? (
+                    "Enviando..."
+                  ) : (
+                    <>
+                      <Mail className="mr-2 h-4 w-4" />
+                      Enviar Link de Recuperação
+                    </>
+                  )}
+                </Button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForgotMode(false);
+                    setError(null);
+                    setSuccess(null);
+                  }}
+                  className="flex w-full items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                 >
-                  Esqueceu a senha?
-                </a>
-              </p>
-            </form>
+                  <ArrowLeft className="h-3 w-3" />
+                  Voltar ao login
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div>
+                  <Label htmlFor="email" className="mb-2 block">
+                    Email
+                  </Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="admin@exemplo.com"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    disabled={loading}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="password" className="mb-2 block">
+                    Senha
+                  </Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="••••••••"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    disabled={loading}
+                    required
+                  />
+                </div>
+
+                {error && (
+                  <p className="text-sm text-red-500">{error}</p>
+                )}
+
+                <Button type="submit" className="w-full" disabled={loading}>
+                  {loading ? (
+                    "Entrando..."
+                  ) : (
+                    <>
+                      <LogIn className="mr-2 h-4 w-4" />
+                      Entrar
+                    </>
+                  )}
+                </Button>
+
+                <p className="text-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForgotMode(true);
+                      setError(null);
+                    }}
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  >
+                    Esqueceu a senha?
+                  </button>
+                </p>
+              </form>
+            )}
           </CardContent>
         </Card>
 
