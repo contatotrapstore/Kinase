@@ -150,6 +150,188 @@ const IMAGE_KEYWORDS_RE =
   /\bimagem\b|\bfigura\b|\bradiografia\b|\btomografia\b|\bressonância\b|\bultrassonografia\b|\bfoto\b|\becografia\b|\beletrocardiograma\b|\becg\b|\brx\b|\braio[- ]?x\b|\b\[imagem\]\b|\b\[figura\]\b|\bfig\.\s*\d/i;
 
 // ---------------------------------------------------------------------------
+// Gabarito comentado parser (formato Estratégia MED / similares)
+// Formato: "N - YYYY BANCA - CIDADE" seguido de comentário + "Resposta: letra X"
+// ---------------------------------------------------------------------------
+
+/**
+ * Regex para cabeçalho de questão no formato gabarito comentado.
+ * Exemplos: "6 - 2022 SUS - SP", "15 - 2022 SCMSP", "100 - 2021 USP - RP"
+ */
+const GABARITO_HEADER_RE =
+  /(?:^|\n)\s*(\d{1,3})\s*-\s*(\d{4}\s+[A-Za-zÀ-ÿ\s\-]+)/g;
+
+/**
+ * Regex para "Resposta: letra X" no final do comentário.
+ */
+const RESPOSTA_LETRA_RE = /Resposta:\s*letra\s+([A-Ea-e])/i;
+
+/**
+ * Regex para alternativas inline no formato gabarito:
+ *   "A) Incorreta." / "B) Correta." / "LETRA A CORRETA"
+ */
+const INLINE_ALT_RE =
+  /([A-E])\)\s*((?:Incorreta|Correta|INCORRETA|CORRETA)[.!]?\s*[^A-E]*?)(?=\s*[A-E]\)\s*(?:Incorreta|Correta|INCORRETA|CORRETA)|Resposta:|Video\s*coment|$)/gi;
+
+const LETRA_ALT_RE = /LETRA[S]?\s+([A-E])\s+(CORRETA|INCORRETA)/gi;
+
+/**
+ * Detecta e parseia formato de gabarito comentado.
+ * Retorna array vazio se o texto não estiver nesse formato.
+ */
+function parseGabaritoComentado(text: string): ParsedQuestion[] {
+  // Verifica se o formato é gabarito: precisa ter pelo menos 3 matches do padrão "N - YYYY BANCA"
+  const headerTest = text.match(/\d{1,3}\s*-\s*\d{4}\s+[A-Za-z]/g);
+  if (!headerTest || headerTest.length < 3) return [];
+
+  // Também precisa ter pelo menos 1 "Resposta: letra" para confirmar
+  if (!/Resposta:\s*letra\s+[A-Ea-e]/i.test(text)) return [];
+
+  // ---- 1. Extrair grid de respostas do topo (se existir) ----
+  const answerGrid: Map<number, string> = new Map();
+  // O grid aparece como letras separadas por tabs/espaços: "A C C E A E D C * C C B..."
+  // Seguido de "Legenda:" e depois os cabeçalhos das questões
+  const legendaIdx = text.indexOf("Legenda:");
+  if (legendaIdx > 0) {
+    const gridSection = text.substring(0, legendaIdx);
+    // Encontra o primeiro bloco de letras em grid (após "-- 1 of N --" ou no início)
+    const gridMatch = gridSection.match(
+      /(?:--\s*\d+\s*of\s*\d+\s*--\s*\n)?((?:[A-E*!]\s+)+[A-E*!](?:\s*\n(?:[A-E*!]\s+)*[A-E*!])*)/i
+    );
+    if (gridMatch) {
+      const letters = gridMatch[1]
+        .replace(/[*!]/g, "") // remove anuladas/dissertativas
+        .split(/\s+/)
+        .filter((l) => /^[A-Ea-e]$/.test(l))
+        .map((l) => l.toUpperCase());
+
+      // Precisamos saber qual é o primeiro número de questão
+      GABARITO_HEADER_RE.lastIndex = 0;
+      const firstHeader = GABARITO_HEADER_RE.exec(text);
+      const firstNum = firstHeader ? parseInt(firstHeader[1], 10) : 1;
+
+      letters.forEach((letter, i) => {
+        answerGrid.set(firstNum + i, letter);
+      });
+    }
+  }
+
+  // ---- 2. Encontrar todos os blocos de questão ----
+  GABARITO_HEADER_RE.lastIndex = 0;
+  const headers: { index: number; order: number; source: string }[] = [];
+  let m: RegExpExecArray | null;
+
+  while ((m = GABARITO_HEADER_RE.exec(text)) !== null) {
+    const order = parseInt(m[1], 10);
+    const source = m[2].trim();
+    // Evitar duplicatas (o grid de números no topo pode fazer match)
+    if (!headers.find((h) => h.order === order)) {
+      headers.push({ index: m.index, order, source });
+    }
+  }
+
+  if (headers.length < 3) return [];
+
+  // ---- 3. Parsear cada bloco ----
+  const questions: ParsedQuestion[] = [];
+
+  for (let i = 0; i < headers.length; i++) {
+    const header = headers[i];
+    const blockEnd =
+      i + 1 < headers.length ? headers[i + 1].index : text.length;
+    const block = text.slice(header.index, blockEnd).trim();
+
+    // Remover o cabeçalho "N - YYYY BANCA - CIDADE"
+    const headerLineEnd = block.indexOf("\n");
+    const commentary =
+      headerLineEnd > 0 ? block.slice(headerLineEnd + 1).trim() : "";
+
+    if (!commentary) continue;
+
+    // Extrair "Resposta: letra X"
+    const respostaMatch = commentary.match(RESPOSTA_LETRA_RE);
+    const correctLabel = respostaMatch
+      ? respostaMatch[1].toUpperCase()
+      : answerGrid.get(header.order) ?? undefined;
+
+    // Remover "Video comentário: NNNNN" e tudo depois
+    const cleanCommentary = commentary
+      .replace(/Video\s*coment[aá]rio:?\s*\d*/gi, "")
+      .replace(/Resposta:\s*letra\s+[A-Ea-e]\.?/gi, "")
+      .replace(/\n/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    // Tentar extrair alternativas inline
+    const options: ParsedQuestion["options"] = [];
+
+    INLINE_ALT_RE.lastIndex = 0;
+    let altMatch: RegExpExecArray | null;
+    while ((altMatch = INLINE_ALT_RE.exec(commentary)) !== null) {
+      const label = altMatch[1].toUpperCase();
+      if (!options.find((o) => o.label === label)) {
+        const altText = altMatch[2]
+          .replace(/\n/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+        options.push({
+          label,
+          text: altText,
+          isCorrect: correctLabel ? label === correctLabel : false,
+        });
+      }
+    }
+
+    // Se não encontrou inline alts, tenta LETRA X CORRETA/INCORRETA
+    if (options.length === 0) {
+      LETRA_ALT_RE.lastIndex = 0;
+      let letraMatch: RegExpExecArray | null;
+      while ((letraMatch = LETRA_ALT_RE.exec(commentary)) !== null) {
+        const label = letraMatch[1].toUpperCase();
+        const isCorrect = letraMatch[2].toUpperCase() === "CORRETA";
+        if (!options.find((o) => o.label === label)) {
+          options.push({ label, text: "", isCorrect });
+        }
+      }
+    }
+
+    // Se ainda sem opções mas temos resposta correta, criar placeholder
+    if (options.length === 0 && correctLabel) {
+      for (const label of ["A", "B", "C", "D"]) {
+        options.push({
+          label,
+          text: "",
+          isCorrect: label === correctLabel,
+        });
+      }
+    }
+
+    // Marcar correta se temos grid
+    if (correctLabel && options.length > 0) {
+      const correctOpt = options.find((o) => o.label === correctLabel);
+      if (correctOpt && !options.some((o) => o.isCorrect)) {
+        correctOpt.isCorrect = true;
+      }
+    }
+
+    const hasImage = IMAGE_KEYWORDS_RE.test(block);
+
+    questions.push({
+      order: header.order,
+      text: cleanCommentary.length > 300
+        ? cleanCommentary.slice(0, 300) + "..."
+        : cleanCommentary,
+      options,
+      explanation: cleanCommentary,
+      hasImage,
+      reference: header.source,
+    });
+  }
+
+  return questions;
+}
+
+// ---------------------------------------------------------------------------
 // Main parser
 // ---------------------------------------------------------------------------
 
@@ -157,6 +339,7 @@ const IMAGE_KEYWORDS_RE =
  * Faz o parse de texto extraído de PDF para um array de questões estruturadas.
  * Resiliente a diferentes formatos: ENAMED / Estratégia MED com áreas,
  * referências e comentários, além de formatos mais simples.
+ * Também suporta formato de gabarito comentado (N - YYYY BANCA - CIDADE).
  */
 export function parsePdfText(text: string): ParsedQuestion[] {
   // Normaliza quebras de linha e espaços extras (mantém \n)
@@ -165,6 +348,14 @@ export function parsePdfText(text: string): ParsedQuestion[] {
     .replace(/\r/g, "\n")
     .replace(/[ \t]+/g, " ")
     .trim();
+
+  // -----------------------------------------------------------------------
+  // 0. Detectar formato gabarito comentado (N - YYYY BANCA)
+  // -----------------------------------------------------------------------
+  const gabaritoQuestions = parseGabaritoComentado(normalized);
+  if (gabaritoQuestions.length > 0) {
+    return gabaritoQuestions;
+  }
 
   // -----------------------------------------------------------------------
   // 1. Detectar áreas de conhecimento e mapear linhas -> área vigente
