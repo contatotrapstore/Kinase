@@ -89,12 +89,20 @@ export default function UploadPage() {
     try {
       return JSON.parse(text);
     } catch {
-      // Servidor retornou texto puro (ex: "Request Entity Too Large")
       throw new Error(text.length > 200 ? text.slice(0, 200) + "..." : text);
     }
   };
 
-  const MAX_FILE_SIZE = 4.5 * 1024 * 1024; // 4.5MB (limite Vercel serverless)
+  /** Extrai texto de um PDF no browser usando pdf-parse (pdfjs-dist) */
+  const extractTextFromPdf = async (file: File): Promise<string> => {
+    const { PDFParse } = await import("pdf-parse");
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8 = new Uint8Array(arrayBuffer);
+    const parser = new PDFParse({ data: uint8 });
+    const result = await parser.getText();
+    await parser.destroy();
+    return result.text;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -106,36 +114,28 @@ export default function UploadPage() {
       let textToParse: string;
 
       if (file) {
-        // Validação de tamanho no frontend
-        if (file.size > MAX_FILE_SIZE) {
+        // Extrai texto do PDF diretamente no browser (sem limite de tamanho)
+        try {
+          textToParse = await extractTextFromPdf(file);
+        } catch (pdfErr) {
+          console.error("Erro ao extrair texto do PDF:", pdfErr);
           throw new Error(
-            `Arquivo muito grande (${formatFileSize(file.size)}). Máximo permitido: ${formatFileSize(MAX_FILE_SIZE)}. Para PDFs maiores, copie o texto do PDF e cole no campo "Colar texto do PDF".`
+            "Não foi possível extrair texto do PDF. Verifique se o arquivo é um PDF válido ou cole o texto manualmente."
           );
         }
 
-        // Step 1: Upload the file to get extracted text
-        const formData = new FormData();
-        formData.append("file", file);
-
-        const uploadRes = await fetch("/api/pdf/upload", {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!uploadRes.ok) {
-          const uploadErr = await safeJson(uploadRes);
-          throw new Error((uploadErr.error as string) || "Erro no upload do PDF");
+        if (!textToParse.trim()) {
+          throw new Error(
+            "O PDF não contém texto extraível (pode ser um PDF de imagens). Cole o texto manualmente no campo abaixo."
+          );
         }
-
-        const uploadData = await safeJson(uploadRes);
-        textToParse = uploadData.text as string;
       } else if (pastedText.trim()) {
         textToParse = pastedText.trim();
       } else {
         throw new Error("Selecione um arquivo PDF ou cole o texto");
       }
 
-      // Step 2: Parse the text to extract questions
+      // Parse the text to extract questions
       const parseRes = await fetch("/api/pdf/parse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
