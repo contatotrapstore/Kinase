@@ -94,9 +94,11 @@ export default function UploadPage() {
   };
 
   /** Extrai texto de um PDF no browser usando pdf-parse (pdfjs-dist) */
-  const extractTextFromPdf = async (file: File): Promise<string> => {
+  const extractTextFromPdf = async (pdfFile: File): Promise<string> => {
     const { PDFParse } = await import("pdf-parse");
-    const arrayBuffer = await file.arrayBuffer();
+    // Configura o worker do pdfjs-dist (necessário no browser)
+    PDFParse.setWorker("/pdf.worker.mjs");
+    const arrayBuffer = await pdfFile.arrayBuffer();
     const uint8 = new Uint8Array(arrayBuffer);
     const parser = new PDFParse({ data: uint8 });
     const result = await parser.getText();
