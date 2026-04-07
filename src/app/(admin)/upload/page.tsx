@@ -94,7 +94,7 @@ export default function UploadPage() {
     }
   };
 
-  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+  const MAX_FILE_SIZE = 4.5 * 1024 * 1024; // 4.5MB (limite Vercel serverless)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -109,7 +109,7 @@ export default function UploadPage() {
         // Validação de tamanho no frontend
         if (file.size > MAX_FILE_SIZE) {
           throw new Error(
-            `Arquivo muito grande (${formatFileSize(file.size)}). Máximo permitido: ${formatFileSize(MAX_FILE_SIZE)}. Tente comprimir o PDF ou cole o texto extraído.`
+            `Arquivo muito grande (${formatFileSize(file.size)}). Máximo permitido: ${formatFileSize(MAX_FILE_SIZE)}. Para PDFs maiores, copie o texto do PDF e cole no campo "Colar texto do PDF".`
           );
         }
 
