@@ -36,4 +36,8 @@ export const env = {
   /** Segredo para validação do webhook do WhatsApp */
   WHATSAPP_WEBHOOK_SECRET:
     process.env.WHATSAPP_WEBHOOK_SECRET ?? '',
+
+  /** Chave da API Anthropic (Claude) para reescrita de explicações */
+  ANTHROPIC_API_KEY:
+    process.env.ANTHROPIC_API_KEY ?? process.env.AI_API_KEY ?? '',
 } as const;

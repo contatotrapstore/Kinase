@@ -17,7 +17,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { name, subject, questions } = body;
+    const { name, subject, questions, images } = body;
+    const imageList: { page: number; dataUrl: string }[] = Array.isArray(images) ? images : [];
 
     if (!name || typeof name !== "string") {
       return NextResponse.json(
@@ -156,6 +157,61 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // 6. Upload images for questions that have hasImage=true
+    if (imageList.length > 0) {
+      // Build a map of question order -> hasImage from the request
+      const questionsWithImage = questions
+        .filter((q: { hasImage?: boolean }) => q.hasImage)
+        .map((q: { order: number }, idx: number) => ({
+          order: q.order ?? idx + 1,
+        }));
+
+      for (let imgIdx = 0; imgIdx < Math.min(questionsWithImage.length, imageList.length); imgIdx++) {
+        const qOrder = questionsWithImage[imgIdx].order;
+        const image = imageList[imgIdx];
+
+        // Find the inserted question row by order
+        const questaoRow = questoesData.find(
+          (qd: any) => qd.question_order === qOrder
+        );
+        if (!questaoRow || !image.dataUrl) continue;
+
+        try {
+          // Convert dataUrl to buffer
+          const base64Data = image.dataUrl.split(",")[1];
+          const buffer = Buffer.from(base64Data, "base64");
+          const mimeType = image.dataUrl.split(";")[0].split(":")[1] || "image/png";
+          const ext = mimeType.split("/")[1] || "png";
+
+          const filePath = `question-images/${pacote.id}/${qOrder}.${ext}`;
+          await supabase.storage
+            .from("question-images")
+            .upload(filePath, buffer, { contentType: mimeType, upsert: true });
+
+          const { data: urlData } = supabase.storage
+            .from("question-images")
+            .getPublicUrl(filePath);
+
+          if (urlData?.publicUrl) {
+            await supabase
+              .from("questoes")
+              .update({ image_url: urlData.publicUrl })
+              .eq("id", questaoRow.id);
+          }
+        } catch (imgErr) {
+          console.error(`Erro ao fazer upload da imagem para questão ${qOrder}:`, imgErr);
+          // Non-fatal: continue with other images
+        }
+      }
+    }
+
+    // Fire-and-forget: rewrite explanations in background
+    // Don't block the response - the user sees questions immediately
+    // Rewritten versions will be available when users interact via WhatsApp
+    rewriteExplanationsForPacote(pacote.id).catch((err) =>
+      console.error("Background rewrite error:", err)
+    );
+
     return NextResponse.json({
       success: true,
       pacoteId: pacote.id,
@@ -167,5 +223,35 @@ export async function POST(request: NextRequest) {
       { error: "Erro interno ao criar pacote" },
       { status: 500 }
     );
+  }
+}
+
+/**
+ * Reescreve as explicações de todas as questões de um pacote usando IA.
+ * Processamento sequencial para evitar rate limits da API.
+ */
+async function rewriteExplanationsForPacote(pacoteId: string) {
+  const { rewriteExplanation } = await import("@/lib/ai/rewriter");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const supabase = (await createClient()) as any;
+
+  const { data: questoes } = await supabase
+    .from("questoes")
+    .select("id, explanation")
+    .eq("pacote_id", pacoteId)
+    .not("explanation", "is", null);
+
+  if (!questoes) return;
+
+  // Process sequentially to avoid rate limits
+  for (const q of questoes) {
+    if (!q.explanation) continue;
+    const rewritten = await rewriteExplanation(q.explanation);
+    if (rewritten !== q.explanation) {
+      await supabase
+        .from("questoes")
+        .update({ explanation_rewritten: rewritten })
+        .eq("id", q.id);
+    }
   }
 }

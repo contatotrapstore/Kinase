@@ -69,6 +69,7 @@ export interface Database {
           text: string;
           image_url: string | null;
           explanation: string | null;
+          explanation_rewritten: string | null;
           created_at: string;
         };
         Insert: {
@@ -78,6 +79,7 @@ export interface Database {
           text: string;
           image_url?: string | null;
           explanation?: string | null;
+          explanation_rewritten?: string | null;
           created_at?: string;
         };
         Update: {
@@ -87,6 +89,7 @@ export interface Database {
           text?: string;
           image_url?: string | null;
           explanation?: string | null;
+          explanation_rewritten?: string | null;
           created_at?: string;
         };
       };
@@ -151,6 +154,9 @@ export interface Database {
           current_question_index: number;
           score: number;
           errors_in_block: number;
+          retry_queue: string[];
+          total_correct: number;
+          total_answered: number;
           status: 'not_started' | 'in_progress' | 'completed';
           created_at: string;
           updated_at: string;
@@ -163,6 +169,9 @@ export interface Database {
           current_question_index?: number;
           score?: number;
           errors_in_block?: number;
+          retry_queue?: string[];
+          total_correct?: number;
+          total_answered?: number;
           status?: 'not_started' | 'in_progress' | 'completed';
           created_at?: string;
           updated_at?: string;
@@ -175,6 +184,9 @@ export interface Database {
           current_question_index?: number;
           score?: number;
           errors_in_block?: number;
+          retry_queue?: string[];
+          total_correct?: number;
+          total_answered?: number;
           status?: 'not_started' | 'in_progress' | 'completed';
           created_at?: string;
           updated_at?: string;

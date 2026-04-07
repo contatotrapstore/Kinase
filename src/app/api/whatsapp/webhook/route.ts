@@ -19,6 +19,7 @@ import {
   rankingMessage,
   progressMessage,
 } from "@/lib/whatsapp/messages";
+import { saveSession, loadSession, completeSession } from "@/lib/whatsapp/session-store";
 
 // ============================================================
 // Types and in-memory session state
@@ -141,6 +142,37 @@ async function getReadyPacoteQuestions(): Promise<{
   }));
 
   return { pacoteId: pacote.id, questions };
+}
+
+/**
+ * Fetches questions for a specific pacote by ID.
+ * Used to restore sessions from persistent storage.
+ */
+async function getQuestionsForPacote(pacoteId: string): Promise<Question[]> {
+  const supabase = (await createClient()) as any;
+
+  const { data: rows, error } = await supabase
+    .from("questoes")
+    .select("id, pacote_id, question_order, text, image_url, explanation, created_at")
+    .eq("pacote_id", pacoteId)
+    .order("question_order", { ascending: true });
+
+  if (error) {
+    console.error("[webhook] Erro ao buscar questões do pacote:", error);
+    return [];
+  }
+
+  return (rows ?? []).map((r: any) => ({
+    id: r.id,
+    bankId: r.pacote_id,
+    questionOrder: r.question_order,
+    text: r.text,
+    imageUrl: r.image_url ?? null,
+    type: "multiple_choice" as const,
+    explanationOriginal: r.explanation ?? null,
+    explanationRewritten: null,
+    createdAt: r.created_at,
+  }));
 }
 
 /**
@@ -361,6 +393,32 @@ export async function POST(request: NextRequest) {
 
     console.log(`[webhook] Mensagem de ${phone}: "${text}"`);
 
+    // --- Restore session from DB if not in memory ---
+    if (!sessions.has(phone)) {
+      const user = await getOrCreateUser(phone);
+      if (user) {
+        const saved = await loadSession(user.id);
+        if (saved) {
+          const questions = await getQuestionsForPacote(saved.pacoteId);
+          if (questions.length > 0) {
+            const state = initializeBlock(questions, saved.currentBlock);
+            state.currentIndex = saved.currentQuestionIndex;
+            state.errorsInBlock = saved.errorsInBlock;
+            state.retryQueue = saved.retryQueue;
+            sessions.set(phone, {
+              user: { id: user.id, phone: user.phone, name: user.name },
+              pacoteId: saved.pacoteId,
+              state,
+              score: saved.score,
+              totalCorrect: saved.totalCorrect,
+              totalAnswered: saved.totalAnswered,
+              questions,
+            });
+          }
+        }
+      }
+    }
+
     // --- 2. Route to command or answer handler ---
     const command = text.toLowerCase();
 
@@ -429,6 +487,18 @@ async function handleStart(
   };
 
   sessions.set(phone, session);
+
+  await saveSession(session.user.id, session.pacoteId, {
+    userId: session.user.id,
+    pacoteId: session.pacoteId,
+    currentBlock: session.state.currentBlock.blockNumber,
+    currentQuestionIndex: session.state.currentIndex,
+    score: session.score,
+    errorsInBlock: session.state.errorsInBlock,
+    retryQueue: session.state.retryQueue ?? [],
+    totalCorrect: session.totalCorrect,
+    totalAnswered: session.totalAnswered,
+  });
 
   await adapter.sendText(phone, welcomeMessage());
   await sendCurrentQuestion(adapter, phone, session);
@@ -588,6 +658,19 @@ async function handleAnswer(
     session.totalAnswered
   );
 
+  // Persist session progress to DB
+  await saveSession(session.user.id, session.pacoteId, {
+    userId: session.user.id,
+    pacoteId: session.pacoteId,
+    currentBlock: session.state.currentBlock.blockNumber,
+    currentQuestionIndex: session.state.currentIndex,
+    score: session.score,
+    errorsInBlock: session.state.errorsInBlock,
+    retryQueue: session.state.retryQueue ?? [],
+    totalCorrect: session.totalCorrect,
+    totalAnswered: session.totalAnswered,
+  });
+
   // Send feedback
   await adapter.sendText(phone, feedbackMessage(result.isCorrect, explanation));
 
@@ -603,6 +686,7 @@ async function handleAnswer(
       );
       await sendCurrentQuestion(adapter, phone, session);
     } else {
+      await completeSession(session.user.id, session.pacoteId);
       await adapter.sendText(
         phone,
         "*Parabéns!* Você completou todos os blocos disponíveis! 🎉\n\nEnvie */ranking* para ver sua posição."
@@ -648,6 +732,11 @@ async function sendCurrentQuestion(
     label: o.label,
     text: o.text,
   }));
+
+  // Send image first if the question has one
+  if (questionData.imageUrl) {
+    await adapter.sendImage(phone, questionData.imageUrl, `Questão ${displayNumber}`);
+  }
 
   await adapter.sendText(
     phone,

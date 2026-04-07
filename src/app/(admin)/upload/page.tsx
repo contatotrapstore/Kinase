@@ -111,17 +111,38 @@ export default function UploadPage() {
     }
   };
 
-  /** Extrai texto de um PDF no browser usando pdf-parse (pdfjs-dist) */
-  const extractTextFromPdf = async (pdfFile: File): Promise<string> => {
+  const [extractedImages, setExtractedImages] = useState<{ page: number; dataUrl: string }[]>([]);
+
+  /** Extrai texto e imagens de um PDF no browser usando pdf-parse (pdfjs-dist) */
+  const extractTextFromPdf = async (pdfFile: File): Promise<{ text: string; images: { page: number; dataUrl: string }[] }> => {
     const { PDFParse } = await import("pdf-parse");
     // Configura o worker do pdfjs-dist (necessário no browser)
     PDFParse.setWorker("/pdf.worker.mjs");
     const arrayBuffer = await pdfFile.arrayBuffer();
     const uint8 = new Uint8Array(arrayBuffer);
     const parser = new PDFParse({ data: uint8 });
-    const result = await parser.getText();
+    const textResult = await parser.getText();
+
+    // Extract images
+    let images: { page: number; dataUrl: string }[] = [];
+    try {
+      const imageResult = await (parser as any).getImage({ imageDataUrl: true });
+      if (imageResult?.pages) {
+        for (const pageImages of imageResult.pages) {
+          for (const img of pageImages.images ?? []) {
+            if (img.dataUrl) {
+              images.push({ page: pageImages.page, dataUrl: img.dataUrl });
+            }
+          }
+        }
+      }
+    } catch {
+      // Image extraction failed - continue without images
+      console.warn("Could not extract images from PDF");
+    }
+
     await parser.destroy();
-    return result.text;
+    return { text: textResult.text, images };
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -134,9 +155,11 @@ export default function UploadPage() {
       let textToParse: string;
 
       if (file) {
-        // Extrai texto do PDF diretamente no browser (sem limite de tamanho)
+        // Extrai texto e imagens do PDF diretamente no browser (sem limite de tamanho)
         try {
-          textToParse = await extractTextFromPdf(file);
+          const pdfResult = await extractTextFromPdf(file);
+          textToParse = pdfResult.text;
+          setExtractedImages(pdfResult.images);
         } catch (pdfErr) {
           console.error("Erro ao extrair texto do PDF:", pdfErr);
           throw new Error(
@@ -185,6 +208,10 @@ export default function UploadPage() {
     setError(null);
 
     try {
+      // Only include images for questions that have hasImage=true
+      const questionsWithImages = parseResult.questions.filter((q) => q.hasImage);
+      const imagesToSend = questionsWithImages.length > 0 ? extractedImages : [];
+
       const res = await fetch("/api/pacotes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -192,6 +219,7 @@ export default function UploadPage() {
           name: bankName,
           subject,
           questions: parseResult.questions,
+          images: imagesToSend,
         }),
       });
 
