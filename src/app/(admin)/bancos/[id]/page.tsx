@@ -5,6 +5,9 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   ArrowLeft,
@@ -14,16 +17,21 @@ import {
   XCircle,
   BarChart3,
   Loader2,
+  Pencil,
+  Save,
+  X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 interface QuestionOption {
+  id: string;
   letter: string;
   text: string;
   isCorrect: boolean;
 }
 
 interface Question {
+  id: string;
   number: number;
   text: string;
   options: QuestionOption[];
@@ -45,8 +53,66 @@ const statusConfig: Record<string, { label: string; className: string }> = {
   error: { label: "Erro", className: "bg-red-100 text-red-800 border-red-200" },
 };
 
-function QuestionCard({ question }: { question: Question }) {
+function QuestionCard({
+  question,
+  onSave,
+}: {
+  question: Question;
+  onSave: (updated: Question) => Promise<boolean>;
+}) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
+  // Edit state
+  const [editText, setEditText] = useState(question.text);
+  const [editExplanation, setEditExplanation] = useState(question.explanation);
+  const [editOptions, setEditOptions] = useState<QuestionOption[]>(
+    question.options.map((o) => ({ ...o }))
+  );
+
+  function startEditing() {
+    setEditText(question.text);
+    setEditExplanation(question.explanation);
+    setEditOptions(question.options.map((o) => ({ ...o })));
+    setIsEditing(true);
+    setFeedback(null);
+  }
+
+  function cancelEditing() {
+    setIsEditing(false);
+    setFeedback(null);
+  }
+
+  function toggleCorrect(index: number) {
+    setEditOptions((prev) =>
+      prev.map((o, i) => ({ ...o, isCorrect: i === index }))
+    );
+  }
+
+  function updateOptionText(index: number, text: string) {
+    setEditOptions((prev) =>
+      prev.map((o, i) => (i === index ? { ...o, text } : o))
+    );
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    const updated: Question = {
+      ...question,
+      text: editText,
+      explanation: editExplanation,
+      options: editOptions,
+    };
+    const ok = await onSave(updated);
+    setSaving(false);
+    if (ok) {
+      setIsEditing(false);
+      setFeedback("Salvo com sucesso");
+      setTimeout(() => setFeedback(null), 2000);
+    }
+  }
 
   return (
     <div className="rounded-lg border border-border">
@@ -71,34 +137,141 @@ function QuestionCard({ question }: { question: Question }) {
 
       {isExpanded && (
         <div className="border-t border-border px-4 pb-4 pt-3">
-          <p className="mb-3 text-sm text-foreground">{question.text}</p>
-
-          <div className="space-y-2">
-            {question.options.map((option) => (
-              <div
-                key={option.letter}
-                className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm ${
-                  option.isCorrect
-                    ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
-                    : "bg-muted/50 text-foreground"
-                }`}
+          {/* Header row: edit button + feedback */}
+          <div className="mb-3 flex items-center justify-between">
+            {feedback && (
+              <span className="text-xs font-medium text-emerald-600">
+                {feedback}
+              </span>
+            )}
+            {!feedback && <span />}
+            {!isEditing && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={startEditing}
+                className="h-7 gap-1 text-xs text-muted-foreground"
               >
-                {option.isCorrect ? (
-                  <CheckCircle className="h-4 w-4 shrink-0 text-emerald-600" />
-                ) : (
-                  <XCircle className="h-4 w-4 shrink-0 text-muted-foreground/50" />
-                )}
-                <span className="font-medium">{option.letter})</span>
-                <span>{option.text}</span>
-              </div>
-            ))}
+                <Pencil className="h-3.5 w-3.5" />
+                Editar
+              </Button>
+            )}
           </div>
 
-          {question.explanation && (
-            <div className="mt-3 rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-800">
-              <span className="font-medium">Explicacao: </span>
-              {question.explanation}
-            </div>
+          {isEditing ? (
+            <>
+              {/* Editable question text */}
+              <Textarea
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                className="mb-3 text-sm"
+                rows={3}
+              />
+
+              {/* Editable options */}
+              <div className="space-y-2">
+                {editOptions.map((option, idx) => (
+                  <div
+                    key={option.letter}
+                    className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm cursor-pointer ${
+                      option.isCorrect
+                        ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                        : "bg-muted/50 text-foreground"
+                    }`}
+                    onClick={() => toggleCorrect(idx)}
+                  >
+                    {option.isCorrect ? (
+                      <CheckCircle className="h-4 w-4 shrink-0 text-emerald-600" />
+                    ) : (
+                      <XCircle className="h-4 w-4 shrink-0 text-muted-foreground/50" />
+                    )}
+                    <span className="font-medium shrink-0">{option.letter})</span>
+                    <Input
+                      value={option.text}
+                      onChange={(e) => updateOptionText(idx, e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="h-7 text-sm"
+                    />
+                  </div>
+                ))}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Clique na opcao para marcar como correta
+              </p>
+
+              {/* Editable explanation */}
+              <div className="mt-3">
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                  Explicacao
+                </label>
+                <Textarea
+                  value={editExplanation}
+                  onChange={(e) => setEditExplanation(e.target.value)}
+                  className="text-sm"
+                  rows={2}
+                />
+              </div>
+
+              {/* Save / Cancel */}
+              <div className="mt-3 flex items-center gap-2">
+                <Button
+                  size="sm"
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="gap-1"
+                >
+                  {saving ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Save className="h-3.5 w-3.5" />
+                  )}
+                  Salvar
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={cancelEditing}
+                  disabled={saving}
+                  className="gap-1"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Cancelar
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Read-only view (unchanged) */}
+              <p className="mb-3 text-sm text-foreground">{question.text}</p>
+
+              <div className="space-y-2">
+                {question.options.map((option) => (
+                  <div
+                    key={option.letter}
+                    className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm ${
+                      option.isCorrect
+                        ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                        : "bg-muted/50 text-foreground"
+                    }`}
+                  >
+                    {option.isCorrect ? (
+                      <CheckCircle className="h-4 w-4 shrink-0 text-emerald-600" />
+                    ) : (
+                      <XCircle className="h-4 w-4 shrink-0 text-muted-foreground/50" />
+                    )}
+                    <span className="font-medium">{option.letter})</span>
+                    <span>{option.text}</span>
+                  </div>
+                ))}
+              </div>
+
+              {question.explanation && (
+                <div className="mt-3 rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-800">
+                  <span className="font-medium">Explicacao: </span>
+                  {question.explanation}
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
@@ -155,11 +328,13 @@ export default function BankDetailPage() {
         }
 
         const mapped: Question[] = (questoes ?? []).map((q: any) => ({
+          id: q.id,
           number: q.question_order,
           text: q.text,
           options: (q.opcoes ?? [])
             .sort((a: any, b: any) => a.label.localeCompare(b.label))
             .map((o: any) => ({
+              id: o.id,
               letter: o.label,
               text: o.text,
               isCorrect: o.is_correct,
@@ -205,6 +380,44 @@ export default function BankDetailPage() {
     );
   }
 
+  async function handleSaveQuestion(updated: Question): Promise<boolean> {
+    try {
+      // Update questao text and explanation
+      const { error: qError } = await (supabase
+        .from("questoes") as any)
+        .update({ text: updated.text, explanation: updated.explanation })
+        .eq("id", updated.id);
+
+      if (qError) {
+        console.error("Erro ao atualizar questao:", qError);
+        return false;
+      }
+
+      // Update each opcao
+      for (const opt of updated.options) {
+        const { error: oError } = await (supabase
+          .from("opcoes") as any)
+          .update({ text: opt.text, is_correct: opt.isCorrect })
+          .eq("id", opt.id);
+
+        if (oError) {
+          console.error("Erro ao atualizar opcao:", oError);
+          return false;
+        }
+      }
+
+      // Update local state
+      setQuestions((prev) =>
+        prev.map((q) => (q.id === updated.id ? updated : q))
+      );
+
+      return true;
+    } catch (err) {
+      console.error("Erro ao salvar questao:", err);
+      return false;
+    }
+  }
+
   const status = statusConfig[bank.status] ?? statusConfig.pending;
 
   return (
@@ -247,7 +460,11 @@ export default function BankDetailPage() {
           ) : (
             <div className="space-y-3">
               {questions.map((q) => (
-                <QuestionCard key={q.number} question={q} />
+                <QuestionCard
+                  key={q.id}
+                  question={q}
+                  onSave={handleSaveQuestion}
+                />
               ))}
             </div>
           )}

@@ -1,14 +1,15 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Upload, FileText, X, Loader2, ArrowLeft, CheckCircle2 } from "lucide-react";
 
-const mockSubjects = [
+const fallbackSubjects = [
   "Anatomia",
   "Fisiologia",
   "Farmacologia",
@@ -33,6 +34,23 @@ interface ParseResult {
 
 export default function UploadPage() {
   const router = useRouter();
+  const supabase = useMemo(() => createClient(), []);
+  const [subjects, setSubjects] = useState<string[]>(fallbackSubjects);
+
+  useEffect(() => {
+    async function fetchSubjects() {
+      const { data, error } = await supabase
+        .from("areas_conhecimento")
+        .select("name")
+        .order("name");
+
+      if (!error && data && data.length > 0) {
+        setSubjects(data.map((row: { name: string }) => row.name));
+      }
+    }
+    fetchSubjects();
+  }, [supabase]);
+
   const [file, setFile] = useState<File | null>(null);
   const [pastedText, setPastedText] = useState("");
   const [subject, setSubject] = useState("");
@@ -401,7 +419,7 @@ export default function UploadPage() {
                 className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
               >
                 <option value="">Selecione uma matéria</option>
-                {mockSubjects.map((s) => (
+                {subjects.map((s) => (
                   <option key={s} value={s}>
                     {s}
                   </option>

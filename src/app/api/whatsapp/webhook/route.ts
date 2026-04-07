@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { env } from "@/lib/env";
+import { createClient } from "@/lib/supabase/server";
 import { EvolutionWhatsAppAdapter } from "@/lib/whatsapp/evolution";
 import { ZApiWhatsAppAdapter } from "@/lib/whatsapp/zapi";
 import type { WhatsAppAdapter, WhatsAppMessage } from "@/lib/whatsapp/adapter";
@@ -20,136 +21,237 @@ import {
 } from "@/lib/whatsapp/messages";
 
 // ============================================================
-// In-memory mock data (temporary until Supabase is connected)
+// Types and in-memory session state
 // ============================================================
 
-/** Mock user record */
-interface MockUser {
+/** User record from Supabase */
+interface DbUser {
   id: string;
   phone: string;
-  name: string;
+  name: string | null;
 }
 
 /** In-memory progress tracker per user phone number */
 interface UserSession {
-  user: MockUser;
+  user: DbUser;
+  pacoteId: string;
   state: QBLState;
   score: number;
   totalCorrect: number;
   totalAnswered: number;
+  /** Cache of questions for the active pacote to avoid repeated fetches */
+  questions: Question[];
 }
 
 /** In-memory store of active sessions keyed by phone number */
 const sessions = new Map<string, UserSession>();
 
-// ---- Mock questions bank ----
-
-const MOCK_OPTIONS: Record<string, Option[]> = {
-  q1: [
-    { id: "q1a", questionId: "q1", label: "A", text: "Inibidor de tirosina quinase", isCorrect: true },
-    { id: "q1b", questionId: "q1", label: "B", text: "Agonista beta-adrenérgico", isCorrect: false },
-    { id: "q1c", questionId: "q1", label: "C", text: "Bloqueador de canal de cálcio", isCorrect: false },
-    { id: "q1d", questionId: "q1", label: "D", text: "Inibidor de protease", isCorrect: false },
-  ],
-  q2: [
-    { id: "q2a", questionId: "q2", label: "A", text: "Pulmão", isCorrect: false },
-    { id: "q2b", questionId: "q2", label: "B", text: "Fígado", isCorrect: false },
-    { id: "q2c", questionId: "q2", label: "C", text: "Medula óssea", isCorrect: true },
-    { id: "q2d", questionId: "q2", label: "D", text: "Rim", isCorrect: false },
-  ],
-  q3: [
-    { id: "q3a", questionId: "q3", label: "A", text: "Apoptose", isCorrect: false },
-    { id: "q3b", questionId: "q3", label: "B", text: "Proliferação celular descontrolada", isCorrect: true },
-    { id: "q3c", questionId: "q3", label: "C", text: "Diferenciação celular", isCorrect: false },
-    { id: "q3d", questionId: "q3", label: "D", text: "Autofagia", isCorrect: false },
-  ],
-};
-
-const MOCK_QUESTIONS: Question[] = [
-  {
-    id: "q1",
-    bankId: "bank1",
-    questionOrder: 1,
-    text: "Qual é o mecanismo de ação do Imatinibe?",
-    imageUrl: null,
-    type: "multiple_choice",
-    explanationOriginal: "O Imatinibe é um inibidor seletivo da tirosina quinase BCR-ABL, utilizado no tratamento da leucemia mieloide crônica.",
-    explanationRewritten: "O Imatinibe atua inibindo a tirosina quinase BCR-ABL. Essa enzima está constitutivamente ativa na LMC devido à translocação t(9;22).",
-    createdAt: "2025-01-01T00:00:00Z",
-  },
-  {
-    id: "q2",
-    bankId: "bank1",
-    questionOrder: 2,
-    text: "Qual o principal sítio de ação da eritropoetina?",
-    imageUrl: null,
-    type: "multiple_choice",
-    explanationOriginal: "A eritropoetina atua principalmente na medula óssea, estimulando a produção de eritrócitos.",
-    explanationRewritten: "A EPO age na medula óssea estimulando a eritropoiese. É produzida nos rins em resposta à hipóxia.",
-    createdAt: "2025-01-01T00:00:00Z",
-  },
-  {
-    id: "q3",
-    bankId: "bank1",
-    questionOrder: 3,
-    text: "Qual o principal efeito da ativação oncogênica de quinases?",
-    imageUrl: null,
-    type: "multiple_choice",
-    explanationOriginal: "A ativação oncogênica de quinases leva à proliferação celular descontrolada, um marco do câncer.",
-    explanationRewritten: "Quinases oncogênicas promovem proliferação celular descontrolada ao ativar vias de sinalização como RAS-MAPK e PI3K-AKT de forma constitutiva.",
-    createdAt: "2025-01-01T00:00:00Z",
-  },
-];
-
-// ---- Mock helpers ----
+// ============================================================
+// Supabase data access helpers
+// ============================================================
 
 /**
- * Returns a mock user for the given phone number.
- * In production this will query Supabase.
+ * Finds a user by phone, or creates one if none exists.
  */
-function getOrCreateMockUser(phone: string): MockUser {
-  return {
-    id: `user_${phone}`,
-    phone,
-    name: phone.slice(-4), // last 4 digits as name placeholder
-  };
-}
+async function getOrCreateUser(phone: string): Promise<DbUser> {
+  const supabase = await createClient() as any;
 
-/**
- * Returns mock questions for the current bank.
- * In production this will query Supabase.
- */
-function getMockQuestions(): Question[] {
-  return MOCK_QUESTIONS;
-}
+  // Try to find existing user
+  const { data: existing, error: findError } = await supabase
+    .from("usuarios")
+    .select("id, phone, name")
+    .eq("phone", phone)
+    .maybeSingle();
 
-/**
- * Returns mock options for a given question ID.
- * In production this will query Supabase.
- */
-function getMockOptions(questionId: string): Option[] {
-  return MOCK_OPTIONS[questionId] ?? [];
-}
-
-/**
- * Returns mock ranking entries for all known sessions.
- */
-function getMockRankingEntries(): Omit<RankingEntry, "position">[] {
-  const entries: Omit<RankingEntry, "position">[] = [];
-  for (const [, session] of sessions) {
-    entries.push({
-      userId: session.user.id,
-      userName: session.user.name,
-      totalScore: session.score,
-      totalCorrect: session.totalCorrect,
-      totalAnswered: session.totalAnswered,
-      accuracyPct:
-        session.totalAnswered > 0
-          ? Math.round((session.totalCorrect / session.totalAnswered) * 10000) / 100
-          : 0,
-    });
+  if (findError) {
+    console.error("[webhook] Erro ao buscar usuário:", findError);
+    throw findError;
   }
-  return entries;
+
+  if (existing) {
+    return existing as DbUser;
+  }
+
+  // Create new user
+  const { data: created, error: createError } = await supabase
+    .from("usuarios")
+    .insert({ phone, name: phone.slice(-4) })
+    .select("id, phone, name")
+    .single();
+
+  if (createError) {
+    console.error("[webhook] Erro ao criar usuário:", createError);
+    throw createError;
+  }
+
+  return created as DbUser;
+}
+
+/**
+ * Fetches the first available pacote with status='ready' and returns
+ * its questions ordered by question_order.
+ * Returns { pacoteId, questions } or null if no ready pacote exists.
+ */
+async function getReadyPacoteQuestions(): Promise<{
+  pacoteId: string;
+  questions: Question[];
+} | null> {
+  const supabase = await createClient() as any;
+
+  // Get first ready pacote
+  const { data: pacote, error: pacoteError } = await supabase
+    .from("pacotes")
+    .select("id")
+    .eq("status", "ready")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (pacoteError) {
+    console.error("[webhook] Erro ao buscar pacote:", pacoteError);
+    throw pacoteError;
+  }
+
+  if (!pacote) {
+    return null;
+  }
+
+  // Fetch questions for this pacote
+  const { data: rows, error: qError } = await supabase
+    .from("questoes")
+    .select("id, pacote_id, question_order, text, image_url, explanation, created_at")
+    .eq("pacote_id", pacote.id)
+    .order("question_order", { ascending: true });
+
+  if (qError) {
+    console.error("[webhook] Erro ao buscar questões:", qError);
+    throw qError;
+  }
+
+  const questions: Question[] = (rows ?? []).map((r: any) => ({
+    id: r.id,
+    bankId: r.pacote_id,
+    questionOrder: r.question_order,
+    text: r.text,
+    imageUrl: r.image_url ?? null,
+    type: "multiple_choice" as const,
+    explanationOriginal: r.explanation ?? null,
+    explanationRewritten: null,
+    createdAt: r.created_at,
+  }));
+
+  return { pacoteId: pacote.id, questions };
+}
+
+/**
+ * Fetches opcoes for a given question ID and maps to the Option type.
+ */
+async function getOptions(questionId: string): Promise<Option[]> {
+  const supabase = await createClient() as any;
+
+  const { data: rows, error } = await supabase
+    .from("opcoes")
+    .select("id, questao_id, label, text, is_correct")
+    .eq("questao_id", questionId);
+
+  if (error) {
+    console.error("[webhook] Erro ao buscar opções:", error);
+    throw error;
+  }
+
+  return (rows ?? []).map((r: any) => ({
+    id: r.id,
+    questionId: r.questao_id,
+    label: r.label,
+    text: r.text,
+    isCorrect: r.is_correct,
+  }));
+}
+
+/**
+ * Fetches ranking entries from the rankings table joined with usuarios.
+ */
+async function getRankingEntries(): Promise<Omit<RankingEntry, "position">[]> {
+  const supabase = await createClient() as any;
+
+  const { data: rows, error } = await supabase
+    .from("rankings")
+    .select("usuario_id, total_score, total_correct, total_answered, accuracy_pct, usuarios(name)");
+
+  if (error) {
+    console.error("[webhook] Erro ao buscar ranking:", error);
+    throw error;
+  }
+
+  return (rows ?? []).map((r: any) => ({
+    userId: r.usuario_id,
+    userName: r.usuarios?.name ?? "Anônimo",
+    totalScore: r.total_score,
+    totalCorrect: r.total_correct,
+    totalAnswered: r.total_answered,
+    accuracyPct: Number(r.accuracy_pct),
+  }));
+}
+
+/**
+ * Inserts an answer record into the respostas table.
+ */
+async function saveAnswer(
+  userId: string,
+  questionId: string,
+  selectedOptionId: string,
+  isCorrect: boolean,
+  wasRetry: boolean
+): Promise<void> {
+  const supabase = await createClient() as any;
+
+  const { error } = await supabase.from("respostas").insert({
+    usuario_id: userId,
+    questao_id: questionId,
+    selected_option_id: selectedOptionId,
+    is_correct: isCorrect,
+    was_retry: wasRetry,
+  });
+
+  if (error) {
+    console.error("[webhook] Erro ao salvar resposta:", error);
+    // Non-fatal: log but don't throw so the user flow continues
+  }
+}
+
+/**
+ * Upserts the user's ranking for the given pacote.
+ */
+async function upsertRanking(
+  userId: string,
+  pacoteId: string,
+  totalScore: number,
+  totalCorrect: number,
+  totalAnswered: number
+): Promise<void> {
+  const supabase = await createClient() as any;
+  const accuracyPct =
+    totalAnswered > 0
+      ? Math.round((totalCorrect / totalAnswered) * 10000) / 100
+      : 0;
+
+  const { error } = await supabase.from("rankings").upsert(
+    {
+      usuario_id: userId,
+      pacote_id: pacoteId,
+      total_score: totalScore,
+      total_correct: totalCorrect,
+      total_answered: totalAnswered,
+      accuracy_pct: accuracyPct,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "usuario_id,pacote_id" }
+  );
+
+  if (error) {
+    console.error("[webhook] Erro ao atualizar ranking:", error);
+    // Non-fatal
+  }
 }
 
 // ============================================================
@@ -302,16 +404,28 @@ async function handleStart(
   adapter: WhatsAppAdapter,
   phone: string
 ): Promise<void> {
-  const user = getOrCreateMockUser(phone);
-  const questions = getMockQuestions();
+  const user = await getOrCreateUser(phone);
+  const pacoteData = await getReadyPacoteQuestions();
+
+  if (!pacoteData || pacoteData.questions.length === 0) {
+    await adapter.sendText(
+      phone,
+      "Nenhum pacote de questões disponível no momento. Tente novamente mais tarde."
+    );
+    return;
+  }
+
+  const { pacoteId, questions } = pacoteData;
   const state = initializeBlock(questions, 1);
 
   const session: UserSession = {
     user,
+    pacoteId,
     state,
     score: 0,
     totalCorrect: 0,
     totalAnswered: 0,
+    questions,
   };
 
   sessions.set(phone, session);
@@ -328,7 +442,7 @@ async function handleRanking(
   adapter: WhatsAppAdapter,
   phone: string
 ): Promise<void> {
-  const entries = getMockRankingEntries();
+  const entries = await getRankingEntries();
 
   if (entries.length === 0) {
     await adapter.sendText(
@@ -415,7 +529,7 @@ async function handleAnswer(
 
   // Get current question and its options
   const currentQuestionId = state.questionsInBlock[state.currentIndex];
-  const options = getMockOptions(currentQuestionId);
+  const options = await getOptions(currentQuestionId);
 
   if (options.length === 0) {
     console.error(`[webhook] Sem opções para questão ${currentQuestionId}`);
@@ -442,8 +556,8 @@ async function handleAnswer(
     options
   );
 
-  // Retrieve the explanation from the question data
-  const questionData = getMockQuestions().find((q) => q.id === currentQuestionId);
+  // Retrieve the explanation from the cached question data
+  const questionData = session.questions.find((q) => q.id === currentQuestionId);
   const explanation =
     questionData?.explanationRewritten ??
     questionData?.explanationOriginal ??
@@ -457,6 +571,23 @@ async function handleAnswer(
     session.score += 10;
   }
 
+  // Persist answer and ranking to Supabase (non-blocking, errors are logged)
+  const wasRetry = result.shouldRetry; // if the engine flagged a retry, previous attempt was a retry
+  await saveAnswer(
+    session.user.id,
+    currentQuestionId,
+    selectedOption.id,
+    result.isCorrect,
+    false // first attempt; retries are tracked when the question re-appears
+  );
+  await upsertRanking(
+    session.user.id,
+    session.pacoteId,
+    session.score,
+    session.totalCorrect,
+    session.totalAnswered
+  );
+
   // Send feedback
   await adapter.sendText(phone, feedbackMessage(result.isCorrect, explanation));
 
@@ -464,8 +595,7 @@ async function handleAnswer(
   if (result.blockCompleted) {
     if (result.advancedToNextBlock) {
       const nextBlockNum = newState.currentBlock.blockNumber + 1;
-      const questions = getMockQuestions();
-      session.state = initializeBlock(questions, nextBlockNum);
+      session.state = initializeBlock(session.questions, nextBlockNum);
 
       await adapter.sendText(
         phone,
@@ -504,8 +634,8 @@ async function sendCurrentQuestion(
   }
 
   const questionId = state.questionsInBlock[state.currentIndex];
-  const questionData = getMockQuestions().find((q) => q.id === questionId);
-  const options = getMockOptions(questionId);
+  const questionData = session.questions.find((q) => q.id === questionId);
+  const options = await getOptions(questionId);
 
   if (!questionData || options.length === 0) {
     console.error(`[webhook] Questão ${questionId} não encontrada`);
