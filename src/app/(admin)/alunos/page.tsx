@@ -42,6 +42,7 @@ export default function AlunosPage() {
   const [search, setSearch] = useState("");
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchUsuarios() {
@@ -54,6 +55,7 @@ export default function AlunosPage() {
 
         if (error) {
           console.error('Erro ao buscar usuários:', error);
+          setError('Erro ao carregar usuarios. Verifique sua conexao.');
           setUsuarios([]);
           return;
         }
@@ -72,6 +74,7 @@ export default function AlunosPage() {
         setUsuarios(mapped);
       } catch (err) {
         console.error('Erro ao buscar usuários:', err);
+        setError('Erro ao carregar usuarios. Verifique sua conexao.');
         setUsuarios([]);
       } finally {
         setLoading(false);
@@ -98,6 +101,11 @@ export default function AlunosPage() {
 
   return (
     <div className="space-y-6">
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
       {/* Search */}
       <div className="relative max-w-sm">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

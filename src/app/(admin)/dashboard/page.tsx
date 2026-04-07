@@ -102,6 +102,7 @@ function timeAgo(dateStr: string): string {
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [totalUsers, setTotalUsers] = useState(0);
   const [totalPacotes, setTotalPacotes] = useState(0);
   const [totalQuestions, setTotalQuestions] = useState(0);
@@ -151,6 +152,7 @@ export default function DashboardPage() {
         setRecentActivity((activityRes.data as unknown as ActivityEntry[]) ?? []);
       } catch (err) {
         console.error("Dashboard fetch error:", err);
+        setError("Erro ao carregar dados do dashboard. Verifique sua conexao.");
       } finally {
         setLoading(false);
       }
@@ -203,6 +205,11 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-8">
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
       {/* ---------- Stats grid ---------- */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {stats.map((stat) => (

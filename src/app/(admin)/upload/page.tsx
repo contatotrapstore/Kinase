@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,6 +32,7 @@ interface ParseResult {
 }
 
 export default function UploadPage() {
+  const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [pastedText, setPastedText] = useState("");
   const [subject, setSubject] = useState("");
@@ -81,6 +83,19 @@ export default function UploadPage() {
     return (bytes / (1024 * 1024)).toFixed(1) + " MB";
   };
 
+  /** Tenta extrair JSON de uma Response; se falhar, retorna erro legível */
+  const safeJson = async (res: Response): Promise<Record<string, unknown>> => {
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      // Servidor retornou texto puro (ex: "Request Entity Too Large")
+      throw new Error(text.length > 200 ? text.slice(0, 200) + "..." : text);
+    }
+  };
+
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -91,6 +106,13 @@ export default function UploadPage() {
       let textToParse: string;
 
       if (file) {
+        // Validação de tamanho no frontend
+        if (file.size > MAX_FILE_SIZE) {
+          throw new Error(
+            `Arquivo muito grande (${formatFileSize(file.size)}). Máximo permitido: ${formatFileSize(MAX_FILE_SIZE)}. Tente comprimir o PDF ou cole o texto extraído.`
+          );
+        }
+
         // Step 1: Upload the file to get extracted text
         const formData = new FormData();
         formData.append("file", file);
@@ -101,12 +123,12 @@ export default function UploadPage() {
         });
 
         if (!uploadRes.ok) {
-          const uploadErr = await uploadRes.json();
-          throw new Error(uploadErr.error || "Erro no upload do PDF");
+          const uploadErr = await safeJson(uploadRes);
+          throw new Error((uploadErr.error as string) || "Erro no upload do PDF");
         }
 
-        const uploadData = await uploadRes.json();
-        textToParse = uploadData.text;
+        const uploadData = await safeJson(uploadRes);
+        textToParse = uploadData.text as string;
       } else if (pastedText.trim()) {
         textToParse = pastedText.trim();
       } else {
@@ -121,11 +143,11 @@ export default function UploadPage() {
       });
 
       if (!parseRes.ok) {
-        const parseErr = await parseRes.json();
-        throw new Error(parseErr.error || "Erro ao processar texto");
+        const parseErr = await safeJson(parseRes);
+        throw new Error((parseErr.error as string) || "Erro ao processar texto");
       }
 
-      const result: ParseResult = await parseRes.json();
+      const result = (await safeJson(parseRes)) as unknown as ParseResult;
       setParseResult(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro desconhecido");
@@ -134,8 +156,36 @@ export default function UploadPage() {
     }
   };
 
-  const handleSave = () => {
-    alert("Questões extraídas com sucesso!");
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (!parseResult || parseResult.count === 0) return;
+
+    setSaving(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/pacotes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: bankName,
+          subject,
+          questions: parseResult.questions,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await safeJson(res);
+        throw new Error((err.error as string) || "Erro ao salvar pacote");
+      }
+
+      router.push("/bancos");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao salvar pacote");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleBack = () => {
@@ -205,6 +255,13 @@ export default function UploadPage() {
               </p>
             )}
 
+            {/* Error message */}
+            {error && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                {error}
+              </div>
+            )}
+
             {/* Actions */}
             <div className="flex gap-3 pt-2">
               <Button variant="outline" onClick={handleBack}>
@@ -213,10 +270,17 @@ export default function UploadPage() {
               </Button>
               <Button
                 onClick={handleSave}
-                disabled={parseResult.count === 0}
+                disabled={parseResult.count === 0 || saving}
                 className="flex-1"
               >
-                Salvar Pacote
+                {saving ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Salvando...
+                  </>
+                ) : (
+                  "Salvar Pacote"
+                )}
               </Button>
             </div>
           </CardContent>

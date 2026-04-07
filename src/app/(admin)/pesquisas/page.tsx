@@ -37,6 +37,7 @@ function StarRating({ rating }: { rating: number }) {
 export default function PesquisasPage() {
   const [pesquisas, setPesquisas] = useState<Pesquisa[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchPesquisas() {
@@ -49,6 +50,7 @@ export default function PesquisasPage() {
 
         if (error) {
           console.error('Erro ao buscar pesquisas:', error);
+          setError('Erro ao carregar pesquisas. Verifique sua conexao.');
           setPesquisas([]);
           return;
         }
@@ -67,6 +69,7 @@ export default function PesquisasPage() {
         setPesquisas(mapped);
       } catch (err) {
         console.error('Erro ao buscar pesquisas:', err);
+        setError('Erro ao carregar pesquisas. Verifique sua conexao.');
         setPesquisas([]);
       } finally {
         setLoading(false);
@@ -87,6 +90,11 @@ export default function PesquisasPage() {
 
   return (
     <div className="space-y-6">
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Pesquisas</CardTitle>

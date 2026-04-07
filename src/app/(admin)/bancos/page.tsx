@@ -53,6 +53,7 @@ const statusConfig: Record<
 export default function BancosPage() {
   const [banks, setBanks] = useState<QuestionBank[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchBanks() {
@@ -65,6 +66,7 @@ export default function BancosPage() {
 
         if (error) {
           console.error('Erro ao buscar pacotes:', error);
+          setError('Erro ao carregar pacotes. Verifique sua conexao.');
           setBanks([]);
           return;
         }
@@ -84,6 +86,7 @@ export default function BancosPage() {
         setBanks(mapped);
       } catch (err) {
         console.error('Erro ao buscar pacotes:', err);
+        setError('Erro ao carregar pacotes. Verifique sua conexao.');
         setBanks([]);
       } finally {
         setLoading(false);
@@ -104,6 +107,11 @@ export default function BancosPage() {
 
   return (
     <div className="space-y-6">
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <div />
         <Link href="/upload">

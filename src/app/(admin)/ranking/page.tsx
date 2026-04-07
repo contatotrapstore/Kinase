@@ -61,6 +61,7 @@ export default function RankingPage() {
     { value: "", label: "Todos os bancos" },
   ]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchData() {
@@ -91,6 +92,7 @@ export default function RankingPage() {
 
         if (error) {
           console.error('Erro ao buscar ranking:', error);
+          setError('Erro ao carregar ranking. Verifique sua conexao.');
           setRanking([]);
           return;
         }
@@ -110,6 +112,7 @@ export default function RankingPage() {
         setRanking(mapped);
       } catch (err) {
         console.error('Erro ao buscar ranking:', err);
+        setError('Erro ao carregar ranking. Verifique sua conexao.');
         setRanking([]);
       } finally {
         setLoading(false);
@@ -130,6 +133,11 @@ export default function RankingPage() {
 
   return (
     <div className="space-y-6">
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
       {/* Filter */}
       <div className="max-w-xs">
         <select

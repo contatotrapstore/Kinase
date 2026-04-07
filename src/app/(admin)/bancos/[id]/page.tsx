@@ -1,13 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Separator } from "@/components/ui/separator";
 import {
   ArrowLeft,
   ChevronDown,
@@ -15,62 +13,37 @@ import {
   CheckCircle,
   XCircle,
   BarChart3,
+  Loader2,
 } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
+
+interface QuestionOption {
+  letter: string;
+  text: string;
+  isCorrect: boolean;
+}
 
 interface Question {
   number: number;
   text: string;
-  options: { letter: string; text: string; isCorrect: boolean }[];
+  options: QuestionOption[];
   explanation: string;
 }
 
-// Mock data for demonstration
-const mockBank = {
-  id: "1",
-  nome: "Prova de Anatomia 2024.1",
-  materia: "Anatomia",
-  status: "pronto" as const,
-  totalQuestions: 3,
-};
+interface BankData {
+  id: string;
+  nome: string;
+  materia: string;
+  status: string;
+  totalQuestions: number;
+}
 
-const mockQuestions: Question[] = [
-  {
-    number: 1,
-    text: "Qual é o maior osso do corpo humano?",
-    options: [
-      { letter: "A", text: "Tíbia", isCorrect: false },
-      { letter: "B", text: "Fêmur", isCorrect: true },
-      { letter: "C", text: "Úmero", isCorrect: false },
-      { letter: "D", text: "Fíbula", isCorrect: false },
-    ],
-    explanation:
-      "O fêmur é o maior e mais forte osso do corpo humano, localizado na coxa.",
-  },
-  {
-    number: 2,
-    text: "Quantos ossos possui o corpo humano adulto?",
-    options: [
-      { letter: "A", text: "196", isCorrect: false },
-      { letter: "B", text: "206", isCorrect: true },
-      { letter: "C", text: "216", isCorrect: false },
-      { letter: "D", text: "256", isCorrect: false },
-    ],
-    explanation:
-      "Um adulto possui 206 ossos. Bebês nascem com cerca de 270, que se fundem ao longo do crescimento.",
-  },
-  {
-    number: 3,
-    text: "Qual estrutura conecta o músculo ao osso?",
-    options: [
-      { letter: "A", text: "Ligamento", isCorrect: false },
-      { letter: "B", text: "Cartilagem", isCorrect: false },
-      { letter: "C", text: "Tendão", isCorrect: true },
-      { letter: "D", text: "Fáscia", isCorrect: false },
-    ],
-    explanation:
-      "Tendões conectam músculos aos ossos. Ligamentos conectam ossos a outros ossos.",
-  },
-];
+const statusConfig: Record<string, { label: string; className: string }> = {
+  pending: { label: "Pendente", className: "bg-amber-100 text-amber-800 border-amber-200" },
+  processing: { label: "Processando", className: "bg-blue-100 text-blue-800 border-blue-200" },
+  ready: { label: "Pronto", className: "bg-emerald-100 text-emerald-800 border-emerald-200" },
+  error: { label: "Erro", className: "bg-red-100 text-red-800 border-red-200" },
+};
 
 function QuestionCard({ question }: { question: Question }) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -123,7 +96,7 @@ function QuestionCard({ question }: { question: Question }) {
 
           {question.explanation && (
             <div className="mt-3 rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-800">
-              <span className="font-medium">Explicação: </span>
+              <span className="font-medium">Explicacao: </span>
               {question.explanation}
             </div>
           )}
@@ -135,6 +108,104 @@ function QuestionCard({ question }: { question: Question }) {
 
 export default function BankDetailPage() {
   const params = useParams();
+  const id = params.id as string;
+  const supabase = useMemo(() => createClient(), []);
+
+  const [bank, setBank] = useState<BankData | null>(null);
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        // Buscar pacote com area
+        const { data: pacote, error: pacoteError } = await supabase
+          .from("pacotes")
+          .select("*, areas_conhecimento(name)")
+          .eq("id", id)
+          .single() as { data: any; error: any };
+
+        if (pacoteError || !pacote) {
+          setError("Pacote nao encontrado");
+          setLoading(false);
+          return;
+        }
+
+        setBank({
+          id: pacote.id,
+          nome: pacote.name,
+          materia: pacote.areas_conhecimento?.name ?? "",
+          status: pacote.status,
+          totalQuestions: pacote.total_questions,
+        });
+
+        // Buscar questoes com opcoes
+        const { data: questoes, error: questoesError } = await supabase
+          .from("questoes")
+          .select("*, opcoes(*)")
+          .eq("pacote_id", id)
+          .order("question_order", { ascending: true }) as { data: any[]; error: any };
+
+        if (questoesError) {
+          console.error("Erro ao buscar questoes:", questoesError);
+          setError("Erro ao carregar questoes");
+          setLoading(false);
+          return;
+        }
+
+        const mapped: Question[] = (questoes ?? []).map((q: any) => ({
+          number: q.question_order,
+          text: q.text,
+          options: (q.opcoes ?? [])
+            .sort((a: any, b: any) => a.label.localeCompare(b.label))
+            .map((o: any) => ({
+              letter: o.label,
+              text: o.text,
+              isCorrect: o.is_correct,
+            })),
+          explanation: q.explanation ?? "",
+        }));
+
+        setQuestions(mapped);
+      } catch (err) {
+        console.error("Erro ao carregar pacote:", err);
+        setError("Erro ao carregar dados do pacote");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    if (id) fetchData();
+  }, [id, supabase]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <span className="ml-2 text-sm text-muted-foreground">Carregando pacote...</span>
+      </div>
+    );
+  }
+
+  if (error || !bank) {
+    return (
+      <div className="space-y-4">
+        <Link
+          href="/bancos"
+          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Voltar para Pacotes
+        </Link>
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          {error || "Pacote nao encontrado"}
+        </div>
+      </div>
+    );
+  }
+
+  const status = statusConfig[bank.status] ?? statusConfig.pending;
 
   return (
     <div className="space-y-6">
@@ -150,33 +221,36 @@ export default function BankDetailPage() {
 
         <div className="flex flex-wrap items-center gap-3">
           <h2 className="text-xl font-semibold text-foreground">
-            {mockBank.nome}
+            {bank.nome}
           </h2>
-          <Badge
-            variant="outline"
-            className="bg-emerald-100 text-emerald-800 border-emerald-200"
-          >
-            Pronto
+          <Badge variant="outline" className={status.className}>
+            {status.label}
           </Badge>
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
-          {mockBank.materia} &middot; {mockBank.totalQuestions} questões
+          {bank.materia} &middot; {bank.totalQuestions} questoes
         </p>
       </div>
 
       {/* Tabs */}
       <Tabs defaultValue="questoes">
         <TabsList>
-          <TabsTrigger value="questoes">Questões</TabsTrigger>
-          <TabsTrigger value="estatisticas">Estatísticas</TabsTrigger>
+          <TabsTrigger value="questoes">Questoes</TabsTrigger>
+          <TabsTrigger value="estatisticas">Estatisticas</TabsTrigger>
         </TabsList>
 
         <TabsContent value="questoes" className="mt-4">
-          <div className="space-y-3">
-            {mockQuestions.map((q) => (
-              <QuestionCard key={q.number} question={q} />
-            ))}
-          </div>
+          {questions.length === 0 ? (
+            <div className="rounded-lg border border-border p-8 text-center text-sm text-muted-foreground">
+              Nenhuma questao encontrada neste pacote.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {questions.map((q) => (
+                <QuestionCard key={q.number} question={q} />
+              ))}
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="estatisticas" className="mt-4">
@@ -186,11 +260,11 @@ export default function BankDetailPage() {
                 <BarChart3 className="h-5 w-5 text-muted-foreground" />
               </div>
               <p className="text-sm font-medium text-muted-foreground">
-                Estatísticas não disponíveis
+                Estatisticas nao disponiveis
               </p>
               <p className="mt-1 text-xs text-muted-foreground/70">
-                As estatísticas serão exibidas quando usuários responderem
-                questões deste pacote
+                As estatisticas serao exibidas quando usuarios responderem
+                questoes deste pacote
               </p>
             </CardContent>
           </Card>
