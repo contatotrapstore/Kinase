@@ -18,6 +18,18 @@ import { createClient } from "@/lib/supabase/client";
 
 type BankStatus = "pendente" | "processando" | "pronto" | "erro";
 
+/** Mapeia status do banco (inglês) para status local (português) */
+const statusMap: Record<string, BankStatus> = {
+  pending: "pendente",
+  processing: "processando",
+  ready: "pronto",
+  error: "erro",
+  pendente: "pendente",
+  processando: "processando",
+  pronto: "pronto",
+  erro: "erro",
+};
+
 interface QuestionBank {
   id: string;
   nome: string;
@@ -77,7 +89,7 @@ export default function BancosPage() {
           materia: p.areas_conhecimento?.name ?? p.area ?? '',
           questoes: p.total_questions ?? p.questoes ?? 0,
           tamanho: p.size ?? p.tamanho ?? 10,
-          status: p.status ?? 'pendente',
+          status: statusMap[p.status] ?? 'pendente',
           data: p.created_at
             ? new Date(p.created_at).toLocaleDateString('pt-BR')
             : '',
