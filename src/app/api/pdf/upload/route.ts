@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import { PDFParse } from "pdf-parse";
 
 /**
  * POST /api/pdf/upload
@@ -43,10 +42,27 @@ export async function POST(request: NextRequest) {
     const arrayBuffer = await file.arrayBuffer();
     const uint8 = new Uint8Array(arrayBuffer);
 
+    // Validar magic bytes do PDF (%PDF-)
+    if (
+      uint8.length < 5 ||
+      uint8[0] !== 0x25 || // %
+      uint8[1] !== 0x50 || // P
+      uint8[2] !== 0x44 || // D
+      uint8[3] !== 0x46 || // F
+      uint8[4] !== 0x2d    // -
+    ) {
+      return NextResponse.json(
+        { error: "O arquivo não é um PDF válido. Verifique o conteúdo do arquivo." },
+        { status: 400 }
+      );
+    }
+
     let text: string;
     let pageCount: number;
 
     try {
+      // Import dinâmico para evitar crash no module load
+      const { PDFParse } = await import("pdf-parse");
       const parser = new PDFParse({ data: uint8 });
       const textResult = await parser.getText();
       text = textResult.text;
