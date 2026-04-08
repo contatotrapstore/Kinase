@@ -154,56 +154,6 @@ export default function UploadPage() {
     return { text: textResult.text, images };
   };
 
-  /** OCR client-side para PDFs escaneados usando pdfjs-dist + Tesseract.js */
-  const performOCR = async (pdfFile: File): Promise<string> => {
-    setError(null);
-
-    // Importar pdfjs-dist para renderizar páginas como imagens
-    const pdfjsLib = await import("pdfjs-dist");
-    pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
-
-    const arrayBuffer = await pdfFile.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
-
-    // Importar Tesseract.js
-    const Tesseract = await import("tesseract.js");
-
-    const allText: string[] = [];
-    const totalPages = pdf.numPages;
-
-    // Processar páginas em lotes de 5 para não sobrecarregar
-    for (let i = 1; i <= totalPages; i++) {
-      setError(null);
-      setSaveProgress(`OCR: processando página ${i}/${totalPages}...`);
-
-      const page = await pdf.getPage(i);
-      const viewport = page.getViewport({ scale: 2.0 }); // 2x para melhor OCR
-
-      // Renderizar página em canvas
-      const canvas = document.createElement("canvas");
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      const ctx = canvas.getContext("2d")!;
-      await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
-
-      // Converter canvas para imagem e fazer OCR
-      const imageData = canvas.toDataURL("image/png");
-      const { data } = await Tesseract.default.recognize(imageData, "por", {
-        logger: () => {}, // Silencia logs do Tesseract
-      });
-
-      if (data.text.trim()) {
-        allText.push(data.text);
-      }
-
-      // Limpar canvas
-      canvas.remove();
-    }
-
-    setSaveProgress("");
-    return allText.join("\n\n");
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -242,44 +192,44 @@ export default function UploadPage() {
             throw new Error("Não foi possível extrair texto do PDF.");
           }
         } else {
-          // PDF escaneado — verificar tamanho
-          if (file.size > 20 * 1024 * 1024) {
-            throw new Error(
-              "Este PDF é baseado em imagens e muito grande para OCR automático (" +
-              (file.size / (1024 * 1024)).toFixed(0) + "MB). " +
-              "Abra o PDF no computador, selecione e copie o texto (Ctrl+A → Ctrl+C), " +
-              "e cole no campo 'Colar texto do PDF' abaixo."
-            );
-          }
-          // PDF escaneado menor — OCR direto usando o pdf já carregado
-          setSaveProgress("PDF escaneado detectado. Iniciando OCR...");
+          // PDF escaneado — OCR com Tesseract Worker persistente
+          setSaveProgress("PDF escaneado detectado. Preparando OCR...");
           try {
             const Tesseract = await import("tesseract.js");
+
+            // Criar worker persistente (1 vez, reusar para todas as páginas)
+            setSaveProgress("Carregando motor OCR (português)...");
+            const worker = await Tesseract.createWorker("por");
+
             const allText: string[] = [];
             const totalPages = pdf.numPages;
 
             for (let i = 1; i <= totalPages; i++) {
-              setSaveProgress(`OCR: página ${i}/${totalPages}...`);
+              setSaveProgress(`OCR: página ${i} de ${totalPages}...`);
 
               const page = await pdf.getPage(i);
-              const viewport = page.getViewport({ scale: 1.5 });
+              // Escala 1.0 para velocidade (menos memória)
+              const viewport = page.getViewport({ scale: 1.0 });
               const canvas = document.createElement("canvas");
               canvas.width = viewport.width;
               canvas.height = viewport.height;
               const ctx = canvas.getContext("2d")!;
               await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
 
-              const imageData = canvas.toDataURL("image/jpeg", 0.8);
-              const { data } = await Tesseract.default.recognize(imageData, "por", {
-                logger: () => {},
-              });
+              // JPEG comprimido para menor payload
+              const imageData = canvas.toDataURL("image/jpeg", 0.6);
+              const { data } = await worker.recognize(imageData);
 
               if (data.text.trim()) {
                 allText.push(data.text);
               }
+
               canvas.remove();
+              // Yield para não travar a UI
+              await new Promise((r) => setTimeout(r, 0));
             }
 
+            await worker.terminate();
             textToParse = allText.join("\n\n");
             setSaveProgress("");
           } catch (ocrErr) {
