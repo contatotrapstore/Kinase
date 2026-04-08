@@ -34,6 +34,7 @@ interface Question {
   id: string;
   number: number;
   text: string;
+  imageUrl: string | null;
   options: QuestionOption[];
   explanation: string;
 }
@@ -241,8 +242,15 @@ function QuestionCard({
             </>
           ) : (
             <>
-              {/* Read-only view (unchanged) */}
+              {/* Read-only view */}
               <p className="mb-3 text-sm text-foreground">{question.text}</p>
+              {question.imageUrl && (
+                <img
+                  src={question.imageUrl}
+                  alt={`Imagem da questão ${question.number}`}
+                  className="max-w-full max-h-80 rounded-lg border border-border my-2"
+                />
+              )}
 
               <div className="space-y-2">
                 {question.options.map((option) => (
@@ -331,6 +339,7 @@ export default function BankDetailPage() {
           id: q.id,
           number: q.question_order,
           text: q.text,
+          imageUrl: q.image_url ?? null,
           options: (q.opcoes ?? [])
             .sort((a: any, b: any) => a.label.localeCompare(b.label))
             .map((o: any) => ({
