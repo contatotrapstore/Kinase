@@ -154,6 +154,56 @@ export default function UploadPage() {
     return { text: textResult.text, images };
   };
 
+  /** OCR client-side para PDFs escaneados usando pdfjs-dist + Tesseract.js */
+  const performOCR = async (pdfFile: File): Promise<string> => {
+    setError(null);
+
+    // Importar pdfjs-dist para renderizar páginas como imagens
+    const pdfjsLib = await import("pdfjs-dist");
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
+
+    const arrayBuffer = await pdfFile.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+
+    // Importar Tesseract.js
+    const Tesseract = await import("tesseract.js");
+
+    const allText: string[] = [];
+    const totalPages = pdf.numPages;
+
+    // Processar páginas em lotes de 5 para não sobrecarregar
+    for (let i = 1; i <= totalPages; i++) {
+      setError(null);
+      setSaveProgress(`OCR: processando página ${i}/${totalPages}...`);
+
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({ scale: 2.0 }); // 2x para melhor OCR
+
+      // Renderizar página em canvas
+      const canvas = document.createElement("canvas");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext("2d")!;
+      await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
+
+      // Converter canvas para imagem e fazer OCR
+      const imageData = canvas.toDataURL("image/png");
+      const { data } = await Tesseract.default.recognize(imageData, "por", {
+        logger: () => {}, // Silencia logs do Tesseract
+      });
+
+      if (data.text.trim()) {
+        allText.push(data.text);
+      }
+
+      // Limpar canvas
+      canvas.remove();
+    }
+
+    setSaveProgress("");
+    return allText.join("\n\n");
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -176,10 +226,30 @@ export default function UploadPage() {
           );
         }
 
-        if (!textToParse.trim()) {
-          throw new Error(
-            "O PDF não contém texto extraível (pode ser um PDF de imagens). Cole o texto manualmente no campo abaixo."
-          );
+        // Se texto vazio ou só marcadores, tentar OCR
+        const meaningfulText = textToParse
+          .replace(/--\s*\d+\s*of\s*\d+\s*--/g, "")
+          .replace(/\s+/g, "")
+          .trim();
+
+        if (meaningfulText.length < 100) {
+          // PDF escaneado — fazer OCR client-side
+          setError(null);
+          setIsLoading(true);
+          try {
+            textToParse = await performOCR(file);
+          } catch (ocrErr) {
+            console.error("Erro no OCR:", ocrErr);
+            throw new Error(
+              "O PDF é baseado em imagens e o OCR não conseguiu extrair texto. Tente colar o texto manualmente."
+            );
+          }
+
+          if (!textToParse.trim()) {
+            throw new Error(
+              "O OCR não conseguiu extrair texto legível do PDF. Tente colar o texto manualmente."
+            );
+          }
         }
       } else if (pastedText.trim()) {
         textToParse = pastedText.trim();

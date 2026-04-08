@@ -4,7 +4,8 @@ import { v4 as uuidv4 } from "uuid";
 /**
  * POST /api/pdf/upload
  * Recebe um PDF via multipart/form-data, extrai texto com pdf-parse.
- * Retorna id, filename, texto extraído e número de páginas.
+ * Se texto extraído for insignificante (PDF escaneado), retorna flag needsOCR.
+ * Retorna id, filename, texto extraído, número de páginas e flag needsOCR.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -12,7 +13,10 @@ export async function POST(request: NextRequest) {
     try {
       formData = await request.formData();
     } catch {
-      return NextResponse.json({ error: 'FormData inválido na requisição' }, { status: 400 });
+      return NextResponse.json(
+        { error: "FormData inválido na requisição" },
+        { status: 400 }
+      );
     }
     const file = formData.get("file") as File | null;
 
@@ -30,11 +34,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Limite de 10MB
-    const MAX_SIZE = 10 * 1024 * 1024;
+    // Limite de 50MB (PDFs escaneados podem ser grandes)
+    const MAX_SIZE = 50 * 1024 * 1024;
     if (file.size > MAX_SIZE) {
       return NextResponse.json(
-        { error: "Arquivo muito grande. Máximo permitido: 10MB" },
+        { error: "Arquivo muito grande. Máximo permitido: 50MB" },
         { status: 400 }
       );
     }
@@ -45,14 +49,14 @@ export async function POST(request: NextRequest) {
     // Validar magic bytes do PDF (%PDF-)
     if (
       uint8.length < 5 ||
-      uint8[0] !== 0x25 || // %
-      uint8[1] !== 0x50 || // P
-      uint8[2] !== 0x44 || // D
-      uint8[3] !== 0x46 || // F
-      uint8[4] !== 0x2d    // -
+      uint8[0] !== 0x25 ||
+      uint8[1] !== 0x50 ||
+      uint8[2] !== 0x44 ||
+      uint8[3] !== 0x46 ||
+      uint8[4] !== 0x2d
     ) {
       return NextResponse.json(
-        { error: "O arquivo não é um PDF válido. Verifique o conteúdo do arquivo." },
+        { error: "O arquivo não é um PDF válido." },
         { status: 400 }
       );
     }
@@ -61,7 +65,6 @@ export async function POST(request: NextRequest) {
     let pageCount: number;
 
     try {
-      // pdf-parse v2 API: named export PDFParse class
       const { PDFParse } = await import("pdf-parse");
       const parser = new PDFParse({ data: uint8 });
       const textResult = await parser.getText();
@@ -71,16 +74,25 @@ export async function POST(request: NextRequest) {
     } catch (parseError) {
       console.error("Erro ao extrair texto do PDF:", parseError);
       return NextResponse.json(
-        { error: "Não foi possível extrair texto do PDF. Verifique se o arquivo é um PDF válido." },
+        { error: "Não foi possível extrair texto do PDF." },
         { status: 422 }
       );
     }
 
+    // Verificar se o texto é significativo (não apenas marcadores de página)
+    const meaningfulText = text
+      .replace(/--\s*\d+\s*of\s*\d+\s*--/g, "")
+      .replace(/\s+/g, "")
+      .trim();
+
+    const needsOCR = meaningfulText.length < 100;
+
     return NextResponse.json({
       id: uuidv4(),
       filename: file.name,
-      text,
+      text: needsOCR ? "" : text,
       pageCount,
+      needsOCR,
     });
   } catch (error) {
     console.error("Erro no upload do PDF:", error);
