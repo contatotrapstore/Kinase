@@ -135,7 +135,7 @@ const COMENTARIO_RE = /\n\s*COMENT[AÁ]RIO\s*:\s*/i;
 /**
  * Regex para gabarito inline
  */
-const GABARITO_RE = /Gabarito\s*:\s*([A-Da-d])/i;
+const GABARITO_RE = /(?:Gabarito|Resposta)\s*:?\s*([A-Ea-e])/i;
 
 /**
  * Referência entre parênteses no início da questão, ex:
@@ -600,8 +600,8 @@ function parseQuestionBlock(
   if (!correctLabel && options.length > 0) {
     // Procura no bloco completo por padrões alternativos
     const altPatterns = [
-      /(?:gabarito|resposta|alternativa correta)\s*:?\s*([A-Da-d])/i,
-      /\b(?:letra|alternativa)\s+([A-Da-d])\b/i,
+      /(?:gabarito|resposta|alternativa correta)\s*:?\s*([A-Ea-e])/i,
+      /\b(?:letra|alternativa)\s+([A-Ea-e])\b/i,
     ];
     for (const pat of altPatterns) {
       const m = block.match(pat);
@@ -620,7 +620,7 @@ function parseQuestionBlock(
   // Limpa explicação (remove possíveis resíduos de gabarito)
   if (explanation) {
     explanation = explanation
-      .replace(/Gabarito\s*:\s*[A-Da-d]/gi, "")
+      .replace(/Gabarito\s*:\s*[A-Ea-e]/gi, "")
       .replace(/\n/g, " ")
       .replace(/\s+/g, " ")
       .trim();
@@ -659,7 +659,7 @@ function applyExternalAnswerKey(
   const gabaritoSection = gabaritoMatch[1];
 
   // Verifica se parece uma lista de gabaritos (muitos "N-X" ou "N. X")
-  const entryPattern = /(\d{1,3})\s*[.):\-–—]\s*([A-Da-d])/gi;
+  const entryPattern = /(\d{1,3})\s*[.):\-–—]\s*([A-Ea-e])/gi;
   const entries: { order: number; label: string }[] = [];
   let entry: RegExpExecArray | null;
 
