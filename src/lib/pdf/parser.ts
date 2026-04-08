@@ -125,7 +125,7 @@ const QUESTION_START_RE =
  * Captura: group 1 = label (A-D), group 2 = texto (tudo até próxima alternativa
  * ou fim de seção)
  */
-const OPTION_LINE_RE = /(?:^|\n)\s*([A-D])\)\s*/gi;
+const OPTION_LINE_RE = /(?:^|\n)\s*\(?\s*([A-Ea-e])\s*[).:\-–—]\s*/gi;
 
 /**
  * Regex para o bloco COMENTÁRIO (pode usar acento ou não)
@@ -318,9 +318,7 @@ function parseGabaritoComentado(text: string): ParsedQuestion[] {
 
     questions.push({
       order: header.order,
-      text: cleanCommentary.length > 300
-        ? cleanCommentary.slice(0, 300) + "..."
-        : cleanCommentary,
+      text: cleanCommentary,
       options,
       explanation: cleanCommentary,
       hasImage,
@@ -551,7 +549,7 @@ function parseQuestionBlock(
       // Procura o padrão "X)" antes do contentStart da próxima
       const nextLabel = optionPositions[j + 1].label;
       const nextRe = new RegExp(
-        `(?:^|\\n)\\s*${nextLabel}\\)\\s*`,
+        `(?:^|\\n)\\s*\\(?\\s*${nextLabel}\\s*[).:\\-–—]\\s*`,
         "gm",
       );
       nextRe.lastIndex = opt.contentStart;
@@ -579,7 +577,7 @@ function parseQuestionBlock(
   if (optionPositions.length > 0) {
     // Encontrar início da linha da primeira alternativa
     const firstLabel = optionPositions[0].label;
-    const firstRe = new RegExp(`(?:^|\\n)\\s*${firstLabel}\\)\\s*`, "m");
+    const firstRe = new RegExp(`(?:^|\\n)\\s*\\(?\\s*${firstLabel}\\s*[).:\\-–—]\\s*`, "m");
     const firstM = mainBody.match(firstRe);
     questionText = firstM
       ? mainBody.slice(0, firstM.index).trim()

@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Upload, FileText, X, Loader2, ArrowLeft, CheckCircle2 } from "lucide-react";
+import { Upload, FileText, X, Loader2, ArrowLeft, CheckCircle2, ChevronDown, ChevronRight } from "lucide-react";
 
 const fallbackSubjects = [
   "Anatomia",
@@ -103,11 +103,20 @@ export default function UploadPage() {
 
   /** Tenta extrair JSON de uma Response; se falhar, retorna erro legível */
   const safeJson = async (res: Response): Promise<Record<string, unknown>> => {
+    const contentType = res.headers.get("content-type");
+    if (contentType && !contentType.includes("application/json")) {
+      const text = await res.text();
+      throw new Error(
+        `O servidor retornou uma resposta inesperada (${contentType}): ${text.length > 200 ? text.slice(0, 200) + "..." : text}`
+      );
+    }
     const text = await res.text();
     try {
       return JSON.parse(text);
     } catch {
-      throw new Error(text.length > 200 ? text.slice(0, 200) + "..." : text);
+      throw new Error(
+        `Erro ao interpretar resposta do servidor: ${text.length > 200 ? text.slice(0, 200) + "..." : text}`
+      );
     }
   };
 
@@ -200,39 +209,85 @@ export default function UploadPage() {
   };
 
   const [saving, setSaving] = useState(false);
+  const [saveProgress, setSaveProgress] = useState("");
+  const [expandedQuestions, setExpandedQuestions] = useState<Set<number>>(new Set());
+
+  const toggleQuestion = (order: number) => {
+    setExpandedQuestions((prev) => {
+      const next = new Set(prev);
+      if (next.has(order)) {
+        next.delete(order);
+      } else {
+        next.add(order);
+      }
+      return next;
+    });
+  };
+
+  const expandAll = () => {
+    if (!parseResult) return;
+    setExpandedQuestions(new Set(parseResult.questions.map((q) => q.order)));
+  };
+
+  const collapseAll = () => {
+    setExpandedQuestions(new Set());
+  };
 
   const handleSave = async () => {
     if (!parseResult || parseResult.count === 0) return;
 
     setSaving(true);
     setError(null);
+    setSaveProgress("");
 
     try {
-      // Only include images for questions that have hasImage=true
-      const questionsWithImages = parseResult.questions.filter((q) => q.hasImage);
-      const imagesToSend = questionsWithImages.length > 0 ? extractedImages : [];
+      const BATCH_SIZE = 50;
+      const allQuestions = parseResult.questions;
+      const totalBatches = Math.ceil(allQuestions.length / BATCH_SIZE);
 
-      const res = await fetch("/api/pacotes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: bankName,
-          subject,
-          questions: parseResult.questions,
-          images: imagesToSend,
-        }),
-      });
+      for (let i = 0; i < totalBatches; i++) {
+        const batch = allQuestions.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
+        setSaveProgress(`Salvando lote ${i + 1}/${totalBatches}...`);
 
-      if (!res.ok) {
-        const err = await safeJson(res);
-        throw new Error((err.error as string) || "Erro ao salvar pacote");
+        // Only include images for questions in this batch that have hasImage=true
+        const batchHasImages = batch.some((q) => q.hasImage);
+        const imagesToSend = batchHasImages ? extractedImages : [];
+
+        const res = await fetch("/api/pacotes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: bankName,
+            subject,
+            questions: batch,
+            images: imagesToSend,
+            batchIndex: i,
+            totalBatches,
+            isFirstBatch: i === 0,
+          }),
+        });
+
+        const contentType = res.headers.get("content-type");
+        if (!res.ok) {
+          if (contentType?.includes("application/json")) {
+            const err = await safeJson(res);
+            throw new Error((err.error as string) || `Erro ao salvar lote ${i + 1}`);
+          } else {
+            const text = await res.text();
+            throw new Error(
+              `Erro ao salvar lote ${i + 1}: ${text.length > 200 ? text.slice(0, 200) + "..." : text}`
+            );
+          }
+        }
       }
 
+      alert(`Pacote salvo com sucesso! ${allQuestions.length} questões importadas.`);
       router.push("/bancos");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao salvar pacote");
     } finally {
       setSaving(false);
+      setSaveProgress("");
     }
   };
 
@@ -264,37 +319,84 @@ export default function UploadPage() {
               )}
             </div>
 
+            {/* Expand/Collapse all */}
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={expandAll}>
+                Expandir tudo
+              </Button>
+              <Button variant="outline" size="sm" onClick={collapseAll}>
+                Recolher tudo
+              </Button>
+            </div>
+
             {/* Questions list */}
             <div className="space-y-3">
-              {parseResult.questions.map((q) => (
-                <div
-                  key={q.order}
-                  className="rounded-lg border border-border bg-muted/20 p-4"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="mb-1 flex items-center gap-2">
-                        <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
-                          {q.order}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {q.options.length} opções
-                        </span>
-                        {q.hasImage && (
-                          <span className="rounded bg-yellow-100 px-1.5 py-0.5 text-xs text-yellow-700">
-                            Imagem
+              {parseResult.questions.map((q) => {
+                const isExpanded = expandedQuestions.has(q.order);
+                return (
+                  <div
+                    key={q.order}
+                    className="rounded-lg border border-border bg-muted/20 p-4"
+                  >
+                    <div
+                      className="flex cursor-pointer items-start justify-between gap-3"
+                      onClick={() => toggleQuestion(q.order)}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-1 flex items-center gap-2">
+                          <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
+                            {q.order}
                           </span>
+                          <span className="text-xs text-muted-foreground">
+                            {q.options.length} opções
+                          </span>
+                          {q.hasImage && (
+                            <span className="rounded bg-yellow-100 px-1.5 py-0.5 text-xs text-yellow-700">
+                              Imagem
+                            </span>
+                          )}
+                        </div>
+                        {isExpanded ? (
+                          <div className="space-y-2">
+                            <p className="whitespace-pre-wrap text-sm text-foreground">
+                              {q.text}
+                            </p>
+                            <div className="space-y-1 pl-2">
+                              {q.options.map((opt) => (
+                                <p
+                                  key={opt.label}
+                                  className={`text-sm ${opt.isCorrect ? "font-semibold text-green-700" : "text-muted-foreground"}`}
+                                >
+                                  {opt.label}) {opt.text}
+                                  {opt.isCorrect && " \u2713"}
+                                </p>
+                              ))}
+                            </div>
+                            {q.explanation && (
+                              <p className="mt-1 rounded bg-blue-50 p-2 text-xs text-blue-800">
+                                <strong>Explicação:</strong> {q.explanation}
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-foreground">
+                            {q.text.length > 150
+                              ? q.text.slice(0, 150) + "..."
+                              : q.text}
+                          </p>
                         )}
                       </div>
-                      <p className="text-sm text-foreground">
-                        {q.text.length > 100
-                          ? q.text.slice(0, 100) + "..."
-                          : q.text}
-                      </p>
+                      <span className="mt-1 shrink-0 transition-transform">
+                        {isExpanded ? (
+                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </span>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             {parseResult.count === 0 && (
@@ -324,7 +426,7 @@ export default function UploadPage() {
                 {saving ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Salvando...
+                    {saveProgress || "Salvando..."}
                   </>
                 ) : (
                   "Salvar Pacote"

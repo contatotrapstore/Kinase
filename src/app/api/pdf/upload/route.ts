@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
     let pageCount: number;
 
     try {
-      // Import dinâmico para evitar crash no module load
+      // pdf-parse v2 API: named export PDFParse class
       const { PDFParse } = await import("pdf-parse");
       const parser = new PDFParse({ data: uint8 });
       const textResult = await parser.getText();
