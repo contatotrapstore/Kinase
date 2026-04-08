@@ -164,7 +164,7 @@ const GABARITO_HEADER_RE =
 /**
  * Regex para "Resposta: letra X" no final do comentário.
  */
-const RESPOSTA_LETRA_RE = /Resposta:\s*letra\s+([A-Ea-e])/i;
+const RESPOSTA_LETRA_RE = /Resposta:?\s*(?:letra\s+)?([A-Ea-e])/i;
 
 /**
  * Regex para alternativas inline no formato gabarito:
@@ -257,7 +257,7 @@ function parseGabaritoComentado(text: string): ParsedQuestion[] {
     // Remover "Video comentário: NNNNN" e tudo depois
     const cleanCommentary = commentary
       .replace(/Video\s*coment[aá]rio:?\s*\d*/gi, "")
-      .replace(/Resposta:\s*letra\s+[A-Ea-e]\.?/gi, "")
+      .replace(/Resposta:?\s*(?:letra\s+)?[A-Ea-e]\.?/gi, "")
       .replace(/\n/g, " ")
       .replace(/\s+/g, " ")
       .trim();
@@ -292,6 +292,34 @@ function parseGabaritoComentado(text: string): ParsedQuestion[] {
         if (!options.find((o) => o.label === label)) {
           options.push({ label, text: "", isCorrect });
         }
+      }
+    }
+
+    // Se ainda sem opções, tenta OPTION_LINE_RE no texto do bloco
+    if (options.length === 0) {
+      OPTION_LINE_RE.lastIndex = 0;
+      const optPositions: { label: string; start: number }[] = [];
+      let olrMatch: RegExpExecArray | null;
+      while ((olrMatch = OPTION_LINE_RE.exec(commentary)) !== null) {
+        const lbl = olrMatch[1].toUpperCase();
+        if (!optPositions.find((o) => o.label === lbl)) {
+          optPositions.push({ label: lbl, start: olrMatch.index + olrMatch[0].length });
+        }
+      }
+      for (let j = 0; j < optPositions.length; j++) {
+        const end = j + 1 < optPositions.length
+          ? commentary.lastIndexOf(optPositions[j + 1].label, optPositions[j + 1].start)
+          : commentary.length;
+        const optText = commentary.slice(optPositions[j].start, end)
+          .replace(/\n/g, " ").replace(/\s+/g, " ")
+          .replace(/Resposta:.*$/i, "").trim()
+          .replace(/[.,;]+$/, "").trim();
+        const corrLabel = correctLabel || (commentary.match(/Resposta:?\s*([A-Ea-e])/i)?.[1]?.toUpperCase());
+        options.push({
+          label: optPositions[j].label,
+          text: optText,
+          isCorrect: corrLabel ? optPositions[j].label === corrLabel : false,
+        });
       }
     }
 
