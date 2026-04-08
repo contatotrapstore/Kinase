@@ -214,41 +214,73 @@ export default function UploadPage() {
       let textToParse: string;
 
       if (file) {
-        // Extrai texto e imagens do PDF diretamente no browser (sem limite de tamanho)
-        try {
-          const pdfResult = await extractTextFromPdf(file);
-          textToParse = pdfResult.text;
-          setExtractedImages(pdfResult.images);
-        } catch (pdfErr) {
-          console.error("Erro ao extrair texto do PDF:", pdfErr);
-          throw new Error(
-            "Não foi possível extrair texto do PDF. Verifique se o arquivo é um PDF válido ou cole o texto manualmente."
-          );
+        // Carregar PDF com pdfjs-dist uma única vez
+        const pdfjsLib = await import("pdfjs-dist");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+
+        // Tentar extrair texto das primeiras 3 páginas para decidir se precisa OCR
+        let sampleText = "";
+        const samplPages = Math.min(3, pdf.numPages);
+        for (let i = 1; i <= samplPages; i++) {
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          sampleText += content.items.map((item: any) => item.str).join(" ");
         }
 
-        // Se texto vazio ou só marcadores, tentar OCR
-        const meaningfulText = textToParse
-          .replace(/--\s*\d+\s*of\s*\d+\s*--/g, "")
-          .replace(/\s+/g, "")
-          .trim();
+        const meaningfulSample = sampleText.replace(/--\s*\d+\s*of\s*\d+\s*--/g, "").replace(/\s+/g, "").trim();
 
-        if (meaningfulText.length < 100) {
-          // PDF escaneado — fazer OCR client-side
-          setError(null);
-          setIsLoading(true);
+        if (meaningfulSample.length > 50) {
+          // PDF com texto — extrair normalmente
           try {
-            textToParse = await performOCR(file);
+            const pdfResult = await extractTextFromPdf(file);
+            textToParse = pdfResult.text;
+            setExtractedImages(pdfResult.images);
+          } catch (pdfErr) {
+            console.error("Erro ao extrair texto:", pdfErr);
+            throw new Error("Não foi possível extrair texto do PDF.");
+          }
+        } else {
+          // PDF escaneado — OCR direto usando o pdf já carregado
+          setSaveProgress("PDF escaneado detectado. Iniciando OCR...");
+          try {
+            const Tesseract = await import("tesseract.js");
+            const allText: string[] = [];
+            const totalPages = pdf.numPages;
+
+            for (let i = 1; i <= totalPages; i++) {
+              setSaveProgress(`OCR: página ${i}/${totalPages}...`);
+
+              const page = await pdf.getPage(i);
+              const viewport = page.getViewport({ scale: 1.5 });
+              const canvas = document.createElement("canvas");
+              canvas.width = viewport.width;
+              canvas.height = viewport.height;
+              const ctx = canvas.getContext("2d")!;
+              await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
+
+              const imageData = canvas.toDataURL("image/jpeg", 0.8);
+              const { data } = await Tesseract.default.recognize(imageData, "por", {
+                logger: () => {},
+              });
+
+              if (data.text.trim()) {
+                allText.push(data.text);
+              }
+              canvas.remove();
+            }
+
+            textToParse = allText.join("\n\n");
+            setSaveProgress("");
           } catch (ocrErr) {
             console.error("Erro no OCR:", ocrErr);
-            throw new Error(
-              "O PDF é baseado em imagens e o OCR não conseguiu extrair texto. Tente colar o texto manualmente."
-            );
+            setSaveProgress("");
+            throw new Error("OCR falhou. Tente colar o texto manualmente.");
           }
 
           if (!textToParse.trim()) {
-            throw new Error(
-              "O OCR não conseguiu extrair texto legível do PDF. Tente colar o texto manualmente."
-            );
+            throw new Error("OCR não extraiu texto legível. Tente colar o texto manualmente.");
           }
         }
       } else if (pastedText.trim()) {
