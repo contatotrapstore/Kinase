@@ -242,7 +242,16 @@ export default function UploadPage() {
             throw new Error("Não foi possível extrair texto do PDF.");
           }
         } else {
-          // PDF escaneado — OCR direto usando o pdf já carregado
+          // PDF escaneado — verificar tamanho
+          if (file.size > 20 * 1024 * 1024) {
+            throw new Error(
+              "Este PDF é baseado em imagens e muito grande para OCR automático (" +
+              (file.size / (1024 * 1024)).toFixed(0) + "MB). " +
+              "Abra o PDF no computador, selecione e copie o texto (Ctrl+A → Ctrl+C), " +
+              "e cole no campo 'Colar texto do PDF' abaixo."
+            );
+          }
+          // PDF escaneado menor — OCR direto usando o pdf já carregado
           setSaveProgress("PDF escaneado detectado. Iniciando OCR...");
           try {
             const Tesseract = await import("tesseract.js");
