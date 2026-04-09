@@ -197,7 +197,7 @@ export async function POST(request: NextRequest) {
           const mimeType = image.dataUrl.split(";")[0].split(":")[1] || "image/png";
           const ext = mimeType.split("/")[1] || "png";
 
-          const filePath = `question-images/${pacote.id}/${qOrder}.${ext}`;
+          const filePath = `question-images/${pacoteIdToUse}/${qOrder}.${ext}`;
           await supabase.storage
             .from("question-images")
             .upload(filePath, buffer, { contentType: mimeType, upsert: true });
@@ -222,7 +222,7 @@ export async function POST(request: NextRequest) {
     // Fire-and-forget: rewrite explanations in background
     // Don't block the response - the user sees questions immediately
     // Rewritten versions will be available when users interact via WhatsApp
-    rewriteExplanationsForPacote(pacote.id).catch((err) =>
+    rewriteExplanationsForPacote(pacoteIdToUse).catch((err) =>
       console.error("Background rewrite error:", err)
     );
 
