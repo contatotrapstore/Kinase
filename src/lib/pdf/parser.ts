@@ -236,6 +236,10 @@ function parseGabaritoComentado(text: string): ParsedQuestion[] {
   const questions: ParsedQuestion[] = [];
 
   for (let i = 0; i < headers.length; i++) {
+    INLINE_ALT_RE.lastIndex = 0;
+    LETRA_ALT_RE.lastIndex = 0;
+    OPTION_LINE_RE.lastIndex = 0;
+
     const header = headers[i];
     const blockEnd =
       i + 1 < headers.length ? headers[i + 1].index : text.length;
@@ -331,10 +335,11 @@ function parseGabaritoComentado(text: string): ParsedQuestion[] {
           .replace(/\n/g, " ").replace(/\s+/g, " ")
           .replace(/Resposta:.*$/i, "").trim()
           .replace(/[.,;]+$/, "").trim();
+        const finalOptText = optText.length > 500 ? optText.slice(0, 500) + "..." : optText;
         const corrLabel = correctLabel || (commentary.match(/Resposta:?\s*([A-Ea-e])/i)?.[1]?.toUpperCase());
         options.push({
           label: optPositions[j].label,
-          text: optText,
+          text: finalOptText,
           isCorrect: corrLabel ? optPositions[j].label === corrLabel : false,
         });
         lastOptEnd = end;
@@ -375,7 +380,7 @@ function parseGabaritoComentado(text: string): ParsedQuestion[] {
     } else {
       // No options found — try to split at common explanation markers
       const explanationMarkerRe =
-        /(?:^|\n)\s*(?:O diagn[oó]stico|Primeiro,?\s*note que|Vamos por partes|A resposta|Trata-se de|Neste caso|A alternativa|Essa quest[aã]o|A quest[aã]o|Comentário|COMENT[AÁ]RIO)/m;
+        /(?:^|\n)\s*(?:O diagn[oó]stico|Primeiro,?\s*note que|Vamos por partes|A resposta|Trata-se de|Neste caso|A alternativa|Essa quest[aã]o|A quest[aã]o|Comentário|COMENT[AÁ]RIO|O paciente|O quadro|A principal|O tratamento|A conduta|Estrategista|Caro\s+Estrategista|Video\s*coment|Gabarito)/m;
       const markerMatch = commentary.match(explanationMarkerRe);
       if (markerMatch && markerMatch.index != null && markerMatch.index > 0) {
         questionText = cleanFragment(commentary.slice(0, markerMatch.index));
@@ -385,6 +390,14 @@ function parseGabaritoComentado(text: string): ParsedQuestion[] {
         questionText = cleanFragment(commentary);
         explanationText = undefined;
       }
+    }
+
+    if (explanationText) {
+      explanationText = explanationText
+        .replace(/Video\s*coment[aá]rio:?\s*\d*/gi, "")
+        .replace(/Resposta:?\s*(?:letra\s+)?[A-Ea-e]\.?/gi, "")
+        .replace(/^\s*[.,:;]\s*/, "")
+        .trim() || undefined;
     }
 
     questions.push({
@@ -411,6 +424,11 @@ function parseGabaritoComentado(text: string): ParsedQuestion[] {
  * Também suporta formato de gabarito comentado (N - YYYY BANCA - CIDADE).
  */
 export function parsePdfText(text: string): ParsedQuestion[] {
+  const MAX_TEXT_SIZE = 5 * 1024 * 1024;
+  if (text.length > MAX_TEXT_SIZE) {
+    text = text.slice(0, MAX_TEXT_SIZE);
+  }
+
   // Normaliza quebras de linha e espaços extras (mantém \n)
   const normalized = text
     .replace(/\r\n/g, "\n")
@@ -475,6 +493,15 @@ export function parsePdfText(text: string): ParsedQuestion[] {
 
   // Ordena por posição no texto (normalmente já está, mas garante)
   questionStarts.sort((a, b) => a.index - b.index);
+
+  const seen = new Set<number>();
+  const uniqueStarts = questionStarts.filter(q => {
+    if (seen.has(q.order)) return false;
+    seen.add(q.order);
+    return true;
+  });
+  questionStarts.length = 0;
+  questionStarts.push(...uniqueStarts);
 
   // -----------------------------------------------------------------------
   // 3. Extrair e parsear cada bloco de questão
@@ -635,10 +662,11 @@ function parseQuestionBlock(
       .replace(/\n/g, " ")
       .replace(/\s+/g, " ")
       .trim();
+    const finalOptText = optText.length > 500 ? optText.slice(0, 500) + "..." : optText;
 
     options.push({
       label: opt.label,
-      text: optText,
+      text: finalOptText,
       isCorrect: correctLabel ? opt.label === correctLabel : false,
     });
   }

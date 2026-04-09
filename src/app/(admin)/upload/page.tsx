@@ -167,6 +167,7 @@ export default function UploadPage() {
 
       if (file) {
         // Carregar PDF com pdfjs-dist uma única vez
+        setSaveProgress("Carregando PDF...");
         const pdfjsLib = await import("pdfjs-dist");
         pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
         const arrayBuffer = await file.arrayBuffer();
@@ -185,6 +186,7 @@ export default function UploadPage() {
 
         if (meaningfulSample.length > 50) {
           // PDF com texto — extrair normalmente
+          setSaveProgress("Analisando questões...");
           try {
             const pdfResult = await extractTextFromPdf(file);
             textToParse = pdfResult.text;
@@ -272,6 +274,7 @@ export default function UploadPage() {
       }
 
       // Parse the text to extract questions
+      setSaveProgress("Preparando preview...");
       const parseRes = await fetch("/api/pdf/parse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -289,6 +292,7 @@ export default function UploadPage() {
       setError(err instanceof Error ? err.message : "Erro desconhecido");
     } finally {
       setIsLoading(false);
+      setSaveProgress("");
     }
   };
 
@@ -422,6 +426,9 @@ export default function UploadPage() {
       }
 
       alert(`Pacote salvo com sucesso! ${allQuestions.length} questões importadas.`);
+      setParseResult(null);
+      setExtractedImages([]);
+      setExpandedQuestions(new Set());
       router.push("/bancos");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao salvar pacote");
@@ -458,6 +465,9 @@ export default function UploadPage() {
                 </span>
               )}
             </div>
+            <p className="text-xs text-muted-foreground">
+              {parseResult.questions.filter((q) => q.options.length > 0).length} com opções • {parseResult.questions.filter((q) => q.hasImage).length} com imagens • {parseResult.questions.filter((q) => q.explanation).length} com explicação
+            </p>
 
             {/* Expand/Collapse all */}
             <div className="flex gap-2">
@@ -493,6 +503,11 @@ export default function UploadPage() {
                           {q.hasImage && (
                             <span className="rounded bg-yellow-100 px-1.5 py-0.5 text-xs text-yellow-700">
                               Imagem
+                            </span>
+                          )}
+                          {q.options.find((o) => o.isCorrect) && (
+                            <span className="text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">
+                              Gabarito: {q.options.find((o) => o.isCorrect)?.label}
                             </span>
                           )}
                         </div>
