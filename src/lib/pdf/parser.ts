@@ -254,22 +254,29 @@ function parseGabaritoComentado(text: string): ParsedQuestion[] {
       ? respostaMatch[1].toUpperCase()
       : answerGrid.get(header.order) ?? undefined;
 
-    // Remover "Video comentário: NNNNN" e tudo depois
-    const cleanCommentary = commentary
-      .replace(/Video\s*coment[aá]rio:?\s*\d*/gi, "")
-      .replace(/Resposta:?\s*(?:letra\s+)?[A-Ea-e]\.?/gi, "")
-      .replace(/\n/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+    // Helper to clean a text fragment (remove video/resposta, collapse whitespace)
+    const cleanFragment = (s: string) =>
+      s
+        .replace(/Video\s*coment[aá]rio:?\s*\d*/gi, "")
+        .replace(/Resposta:?\s*(?:letra\s+)?[A-Ea-e]\.?/gi, "")
+        .replace(/\n/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
 
     // Tentar extrair alternativas inline
     const options: ParsedQuestion["options"] = [];
+
+    // Track which extraction method found options and positions for text/explanation splitting
+    let firstOptIndex = -1; // position of first option in `commentary`
+    let lastOptEnd = -1;    // position after the last option text in `commentary`
 
     INLINE_ALT_RE.lastIndex = 0;
     let altMatch: RegExpExecArray | null;
     while ((altMatch = INLINE_ALT_RE.exec(commentary)) !== null) {
       const label = altMatch[1].toUpperCase();
       if (!options.find((o) => o.label === label)) {
+        if (firstOptIndex < 0) firstOptIndex = altMatch.index;
+        lastOptEnd = altMatch.index + altMatch[0].length;
         const altText = altMatch[2]
           .replace(/\n/g, " ")
           .replace(/\s+/g, " ")
@@ -290,6 +297,8 @@ function parseGabaritoComentado(text: string): ParsedQuestion[] {
         const label = letraMatch[1].toUpperCase();
         const isCorrect = letraMatch[2].toUpperCase() === "CORRETA";
         if (!options.find((o) => o.label === label)) {
+          if (firstOptIndex < 0) firstOptIndex = letraMatch.index;
+          lastOptEnd = letraMatch.index + letraMatch[0].length;
           options.push({ label, text: "", isCorrect });
         }
       }
@@ -298,13 +307,16 @@ function parseGabaritoComentado(text: string): ParsedQuestion[] {
     // Se ainda sem opções, tenta OPTION_LINE_RE no texto do bloco
     if (options.length === 0) {
       OPTION_LINE_RE.lastIndex = 0;
-      const optPositions: { label: string; start: number }[] = [];
+      const optPositions: { label: string; start: number; matchIndex: number }[] = [];
       let olrMatch: RegExpExecArray | null;
       while ((olrMatch = OPTION_LINE_RE.exec(commentary)) !== null) {
         const lbl = olrMatch[1].toUpperCase();
         if (!optPositions.find((o) => o.label === lbl)) {
-          optPositions.push({ label: lbl, start: olrMatch.index + olrMatch[0].length });
+          optPositions.push({ label: lbl, start: olrMatch.index + olrMatch[0].length, matchIndex: olrMatch.index });
         }
+      }
+      if (optPositions.length > 0) {
+        firstOptIndex = optPositions[0].matchIndex;
       }
       for (let j = 0; j < optPositions.length; j++) {
         const end = j + 1 < optPositions.length
@@ -320,6 +332,8 @@ function parseGabaritoComentado(text: string): ParsedQuestion[] {
           text: optText,
           isCorrect: corrLabel ? optPositions[j].label === corrLabel : false,
         });
+        // Track end of last option
+        lastOptEnd = end;
       }
     }
 
@@ -344,11 +358,36 @@ function parseGabaritoComentado(text: string): ParsedQuestion[] {
 
     const hasImage = IMAGE_KEYWORDS_RE.test(block);
 
+    // ---- Split text (enunciado) vs explanation ----
+    let questionText: string;
+    let explanationText: string | undefined;
+
+    if (firstOptIndex > 0) {
+      // Everything before first option = enunciado
+      questionText = cleanFragment(commentary.slice(0, firstOptIndex));
+      // Everything after last option and before "Resposta:" = explanation
+      const afterOpts = commentary.slice(lastOptEnd);
+      explanationText = cleanFragment(afterOpts) || undefined;
+    } else {
+      // No options found — try to split at common explanation markers
+      const explanationMarkerRe =
+        /(?:^|\n)\s*(?:O diagn[oó]stico|Primeiro,?\s*note que|Vamos por partes|A resposta|Trata-se de|Neste caso|A alternativa|Essa quest[aã]o|A quest[aã]o|Comentário|COMENT[AÁ]RIO)/m;
+      const markerMatch = commentary.match(explanationMarkerRe);
+      if (markerMatch && markerMatch.index != null && markerMatch.index > 0) {
+        questionText = cleanFragment(commentary.slice(0, markerMatch.index));
+        explanationText = cleanFragment(commentary.slice(markerMatch.index)) || undefined;
+      } else {
+        // Fallback: entire commentary as text, no separate explanation
+        questionText = cleanFragment(commentary);
+        explanationText = undefined;
+      }
+    }
+
     questions.push({
       order: header.order,
-      text: cleanCommentary,
+      text: questionText,
       options,
-      explanation: cleanCommentary,
+      explanation: explanationText,
       hasImage,
       reference: header.source,
     });

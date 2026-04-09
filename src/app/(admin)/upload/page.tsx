@@ -60,6 +60,8 @@ export default function UploadPage() {
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const ocrCancelledRef = useRef(false);
+  const [ocrInProgress, setOcrInProgress] = useState(false);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -194,6 +196,8 @@ export default function UploadPage() {
         } else {
           // PDF escaneado — OCR com Tesseract Worker persistente
           setSaveProgress("PDF escaneado detectado. Preparando OCR...");
+          ocrCancelledRef.current = false;
+          setOcrInProgress(true);
           try {
             const Tesseract = await import("tesseract.js");
 
@@ -203,13 +207,27 @@ export default function UploadPage() {
 
             const allText: string[] = [];
             const totalPages = pdf.numPages;
+            const startTime = Date.now();
 
             for (let i = 1; i <= totalPages; i++) {
-              setSaveProgress(`OCR: página ${i} de ${totalPages}...`);
+              // Verificar cancelamento
+              if (ocrCancelledRef.current) {
+                await worker.terminate();
+                throw new Error("OCR cancelado pelo usuário.");
+              }
+
+              if (i === 1) {
+                setSaveProgress(`OCR: página ${i} de ${totalPages}...`);
+              } else {
+                const elapsed = Date.now() - startTime;
+                const avgPerPage = elapsed / (i - 1);
+                const remaining = Math.ceil((totalPages - i + 1) * avgPerPage / 60000);
+                setSaveProgress(`OCR: página ${i} de ${totalPages} (~${remaining} min restantes)`);
+              }
 
               const page = await pdf.getPage(i);
-              // Escala 1.0 para velocidade (menos memória)
-              const viewport = page.getViewport({ scale: 1.0 });
+              // Escala 0.75 para velocidade (menos memória, ~44% mais rápido)
+              const viewport = page.getViewport({ scale: 0.75 });
               const canvas = document.createElement("canvas");
               canvas.width = viewport.width;
               canvas.height = viewport.height;
@@ -235,7 +253,12 @@ export default function UploadPage() {
           } catch (ocrErr) {
             console.error("Erro no OCR:", ocrErr);
             setSaveProgress("");
+            if (ocrErr instanceof Error && ocrErr.message === "OCR cancelado pelo usuário.") {
+              throw ocrErr;
+            }
             throw new Error("OCR falhou. Tente colar o texto manualmente.");
+          } finally {
+            setOcrInProgress(false);
           }
 
           if (!textToParse.trim()) {
@@ -302,7 +325,7 @@ export default function UploadPage() {
     setSaveProgress("");
 
     try {
-      const BATCH_SIZE = 50;
+      const BATCH_SIZE = 15;
       const allQuestions = parseResult.questions;
       const totalBatches = Math.ceil(allQuestions.length / BATCH_SIZE);
 
@@ -310,22 +333,67 @@ export default function UploadPage() {
         const batch = allQuestions.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
         setSaveProgress(`Salvando lote ${i + 1}/${totalBatches}...`);
 
-        // Only include images for questions in this batch that have hasImage=true
-        const batchHasImages = batch.some((q) => q.hasImage);
-        const imagesToSend = batchHasImages ? extractedImages : [];
+        // Strip heavy fields from payload — only send what the API needs
+        const lightBatch = batch.map((q) => ({
+          order: q.order,
+          text: q.text,
+          options: q.options,
+          hasImage: q.hasImage,
+        }));
+
+        // Build payload without images (images can be uploaded separately)
+        const payload = JSON.stringify({
+          name: bankName,
+          subject,
+          questions: lightBatch,
+          images: [],
+          batchIndex: i,
+          totalBatches,
+          isFirstBatch: i === 0,
+        });
+
+        // Safety check: if a single batch still exceeds 3MB, split it further
+        const MAX_PAYLOAD_BYTES = 3 * 1024 * 1024; // 3MB
+        if (new Blob([payload]).size > MAX_PAYLOAD_BYTES) {
+          // Split this batch in half and send each half
+          const mid = Math.ceil(lightBatch.length / 2);
+          const halves = [lightBatch.slice(0, mid), lightBatch.slice(mid)];
+          for (let h = 0; h < halves.length; h++) {
+            const halfPayload = JSON.stringify({
+              name: bankName,
+              subject,
+              questions: halves[h],
+              images: [],
+              batchIndex: i,
+              totalBatches,
+              isFirstBatch: i === 0 && h === 0,
+            });
+            setSaveProgress(`Salvando lote ${i + 1}/${totalBatches} (parte ${h + 1}/2)...`);
+            const halfRes = await fetch("/api/pacotes", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: halfPayload,
+            });
+            if (!halfRes.ok) {
+              const ct = halfRes.headers.get("content-type");
+              if (ct?.includes("application/json")) {
+                const err = await safeJson(halfRes);
+                throw new Error((err.error as string) || `Erro ao salvar lote ${i + 1} parte ${h + 1}`);
+              } else {
+                const text = await halfRes.text();
+                throw new Error(
+                  `Erro ao salvar lote ${i + 1} parte ${h + 1}: ${text.length > 200 ? text.slice(0, 200) + "..." : text}`
+                );
+              }
+            }
+          }
+          continue; // skip the normal send below since we already sent both halves
+        }
 
         const res = await fetch("/api/pacotes", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: bankName,
-            subject,
-            questions: batch,
-            images: imagesToSend,
-            batchIndex: i,
-            totalBatches,
-            isFirstBatch: i === 0,
-          }),
+          body: payload,
         });
 
         const contentType = res.headers.get("content-type");
@@ -646,7 +714,7 @@ export default function UploadPage() {
               {isLoading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Processando...
+                  {saveProgress || "Processando..."}
                 </>
               ) : (
                 <>
@@ -655,6 +723,18 @@ export default function UploadPage() {
                 </>
               )}
             </Button>
+
+            {ocrInProgress && (
+              <Button
+                type="button"
+                variant="destructive"
+                className="w-full"
+                onClick={() => { ocrCancelledRef.current = true; }}
+              >
+                <X className="mr-2 h-4 w-4" />
+                Cancelar OCR
+              </Button>
+            )}
           </form>
         </CardContent>
       </Card>
