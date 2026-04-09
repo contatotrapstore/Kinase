@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { name, subject, questions, images } = body;
+    const { name, subject, questions, images, isFirstBatch, pacoteId: existingPacoteId } = body;
     const imageList: { page: number; dataUrl: string }[] = Array.isArray(images) ? images : [];
 
     if (!name || typeof name !== "string") {
@@ -72,35 +72,49 @@ export async function POST(request: NextRequest) {
       areaId = newArea.id;
     }
 
-    // 2. Determinar tamanho do pacote (10, 20 ou 30)
-    const count = questions.length;
-    const tamanho: 10 | 20 | 30 = count <= 10 ? 10 : count <= 20 ? 20 : 30;
+    // 2. Criar pacote (primeiro lote) ou usar existente (lotes seguintes)
+    let pacoteIdToUse: string;
 
-    // 3. Criar o pacote
-    const { data: pacote, error: pacoteError } = await supabase
-      .from("pacotes")
-      .insert({
-        name,
-        area_id: areaId,
-        tamanho,
-        status: "ready" as const,
-        total_questions: count,
-      })
-      .select("id")
-      .single();
+    if (isFirstBatch !== false && !existingPacoteId) {
+      // Primeiro lote — criar pacote novo
+      const count = questions.length;
+      const tamanho: 10 | 20 | 30 = count <= 10 ? 10 : count <= 20 ? 20 : 30;
 
-    if (pacoteError || !pacote) {
-      console.error("Erro ao criar pacote:", pacoteError);
-      return NextResponse.json(
-        { error: "Erro ao criar pacote" },
-        { status: 500 }
-      );
+      const { data: pacote, error: pacoteError } = await supabase
+        .from("pacotes")
+        .insert({
+          name,
+          area_id: areaId,
+          tamanho,
+          status: "ready" as const,
+          total_questions: count,
+        })
+        .select("id")
+        .single();
+
+      if (pacoteError || !pacote) {
+        console.error("Erro ao criar pacote:", pacoteError);
+        return NextResponse.json(
+          { error: "Erro ao criar pacote" },
+          { status: 500 }
+        );
+      }
+      pacoteIdToUse = pacote.id;
+    } else {
+      // Lotes seguintes — usar pacote existente
+      pacoteIdToUse = existingPacoteId;
+
+      // Atualizar total_questions do pacote
+      await supabase
+        .from("pacotes")
+        .update({ total_questions: questions.length })
+        .eq("id", pacoteIdToUse);
     }
 
     // 4. Inserir questões
     const questoesInsert = questions.map(
       (q: { order: number; text: string; explanation?: string }, i: number) => ({
-        pacote_id: pacote.id,
+        pacote_id: pacoteIdToUse,
         question_order: q.order ?? i + 1,
         text: q.text,
         explanation: q.explanation ?? null,
@@ -214,7 +228,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      pacoteId: pacote.id,
+      pacoteId: pacoteIdToUse,
       totalQuestions: questoesData.length,
     });
   } catch (error) {

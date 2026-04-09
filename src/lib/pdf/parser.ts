@@ -319,9 +319,14 @@ function parseGabaritoComentado(text: string): ParsedQuestion[] {
         firstOptIndex = optPositions[0].matchIndex;
       }
       for (let j = 0; j < optPositions.length; j++) {
-        const end = j + 1 < optPositions.length
-          ? commentary.lastIndexOf(optPositions[j + 1].label, optPositions[j + 1].start)
-          : commentary.length;
+        let end: number;
+        if (j + 1 < optPositions.length) {
+          end = optPositions[j + 1].matchIndex;
+        } else {
+          // Last option: text goes only to the end of the line (next newline)
+          const nlAfterLastOpt = commentary.indexOf("\n", optPositions[j].start);
+          end = nlAfterLastOpt > 0 ? nlAfterLastOpt : commentary.length;
+        }
         const optText = commentary.slice(optPositions[j].start, end)
           .replace(/\n/g, " ").replace(/\s+/g, " ")
           .replace(/Resposta:.*$/i, "").trim()
@@ -332,7 +337,6 @@ function parseGabaritoComentado(text: string): ParsedQuestion[] {
           text: optText,
           isCorrect: corrLabel ? optPositions[j].label === corrLabel : false,
         });
-        // Track end of last option
         lastOptEnd = end;
       }
     }

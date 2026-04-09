@@ -328,12 +328,12 @@ export default function UploadPage() {
       const BATCH_SIZE = 15;
       const allQuestions = parseResult.questions;
       const totalBatches = Math.ceil(allQuestions.length / BATCH_SIZE);
+      let createdPacoteId: string | null = null;
 
       for (let i = 0; i < totalBatches; i++) {
         const batch = allQuestions.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
         setSaveProgress(`Salvando lote ${i + 1}/${totalBatches}...`);
 
-        // Strip heavy fields from payload — only send what the API needs
         const lightBatch = batch.map((q) => ({
           order: q.order,
           text: q.text,
@@ -341,7 +341,6 @@ export default function UploadPage() {
           hasImage: q.hasImage,
         }));
 
-        // Build payload without images (images can be uploaded separately)
         const payload = JSON.stringify({
           name: bankName,
           subject,
@@ -350,6 +349,7 @@ export default function UploadPage() {
           batchIndex: i,
           totalBatches,
           isFirstBatch: i === 0,
+          pacoteId: createdPacoteId,
         });
 
         // Safety check: if a single batch still exceeds 3MB, split it further
@@ -367,6 +367,7 @@ export default function UploadPage() {
               batchIndex: i,
               totalBatches,
               isFirstBatch: i === 0 && h === 0,
+              pacoteId: createdPacoteId,
             });
             setSaveProgress(`Salvando lote ${i + 1}/${totalBatches} (parte ${h + 1}/2)...`);
             const halfRes = await fetch("/api/pacotes", {
@@ -406,6 +407,16 @@ export default function UploadPage() {
             throw new Error(
               `Erro ao salvar lote ${i + 1}: ${text.length > 200 ? text.slice(0, 200) + "..." : text}`
             );
+          }
+        }
+
+        // Capture pacoteId from first batch response
+        if (i === 0) {
+          try {
+            const resData = await safeJson(res);
+            createdPacoteId = (resData.pacoteId as string) || null;
+          } catch {
+            // If can't parse response, continue without pacoteId
           }
         }
       }
