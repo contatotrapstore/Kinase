@@ -479,11 +479,22 @@ export default function UploadPage() {
           hasImage: q.hasImage,
         }));
 
+        // Calcular slice de extractedImages correspondente a esse batch
+        // extractedImages vem em ordem das questões hasImage=true globalmente
+        const prevHasImage = allQuestions
+          .slice(0, i * BATCH_SIZE)
+          .filter((q) => q.hasImage).length;
+        const batchHasImageCount = batch.filter((q) => q.hasImage).length;
+        const batchImages = extractedImages.slice(
+          prevHasImage,
+          prevHasImage + batchHasImageCount
+        );
+
         const payload = JSON.stringify({
           name: bankName,
           subject,
           questions: lightBatch,
-          images: [],
+          images: batchImages,
           batchIndex: i,
           totalBatches,
           isFirstBatch: i === 0,
@@ -493,15 +504,20 @@ export default function UploadPage() {
         // Safety check: if a single batch still exceeds 3MB, split it further
         const MAX_PAYLOAD_BYTES = 3 * 1024 * 1024; // 3MB
         if (new Blob([payload]).size > MAX_PAYLOAD_BYTES) {
-          // Split this batch in half and send each half
+          // Split this batch in half and send each half — reparticionar imagens também
           const mid = Math.ceil(lightBatch.length / 2);
           const halves = [lightBatch.slice(0, mid), lightBatch.slice(mid)];
+          const firstHalfHasImgs = halves[0].filter((q) => q.hasImage).length;
+          const halfImages = [
+            batchImages.slice(0, firstHalfHasImgs),
+            batchImages.slice(firstHalfHasImgs),
+          ];
           for (let h = 0; h < halves.length; h++) {
             const halfPayload = JSON.stringify({
               name: bankName,
               subject,
               questions: halves[h],
-              images: [],
+              images: halfImages[h],
               batchIndex: i,
               totalBatches,
               isFirstBatch: i === 0 && h === 0,
