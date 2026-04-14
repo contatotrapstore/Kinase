@@ -196,139 +196,124 @@ export default function UploadPage() {
             throw new Error("Não foi possível extrair texto do PDF.");
           }
         } else {
-          // PDF escaneado — extração via Claude Vision (muito mais preciso que OCR)
-          setSaveProgress("PDF escaneado detectado. Extraindo questões com IA...");
+          // PDF escaneado — OCR paralelo com Tesseract Scheduler (4 workers)
+          setSaveProgress("PDF escaneado detectado. Preparando OCR paralelo...");
           ocrCancelledRef.current = false;
           setOcrInProgress(true);
 
           try {
-            const BATCH_PAGES = 15;
+            const Tesseract = await import("tesseract.js");
             const totalPages = pdf.numPages;
-            const totalBatches = Math.ceil(totalPages / BATCH_PAGES);
-            const allQuestions: ParsedQuestion[] = [];
-            const startTime = Date.now();
+            const NUM_WORKERS = 4;
 
-            for (let b = 0; b < totalBatches; b++) {
+            // 1. Criar scheduler com N workers (todos em "por")
+            setSaveProgress(`Carregando ${NUM_WORKERS} motores OCR (português)...`);
+            const scheduler = Tesseract.createScheduler();
+            for (let w = 0; w < NUM_WORKERS; w++) {
               if (ocrCancelledRef.current) {
-                throw new Error("Extração cancelada pelo usuário.");
+                await scheduler.terminate();
+                throw new Error("OCR cancelado pelo usuário.");
+              }
+              const worker = await Tesseract.createWorker("por");
+              scheduler.addWorker(worker);
+            }
+
+            // 2. Renderizar todas as páginas como JPEG (rápido)
+            const pageImages: string[] = [];
+            const startRender = Date.now();
+            for (let i = 1; i <= totalPages; i++) {
+              if (ocrCancelledRef.current) {
+                await scheduler.terminate();
+                throw new Error("OCR cancelado pelo usuário.");
               }
 
-              const startPage = b * BATCH_PAGES + 1;
-              const endPage = Math.min(startPage + BATCH_PAGES - 1, totalPages);
-
-              // Estimativa de tempo
-              if (b === 0) {
-                setSaveProgress(
-                  `Renderizando páginas ${startPage}-${endPage} de ${totalPages}...`
-                );
-              } else {
-                const elapsed = Date.now() - startTime;
-                const avgPerBatch = elapsed / b;
-                const remaining = Math.ceil(
-                  ((totalBatches - b) * avgPerBatch) / 60000
-                );
-                setSaveProgress(
-                  `Batch ${b + 1}/${totalBatches} (páginas ${startPage}-${endPage}) ~${remaining} min restantes`
-                );
-              }
-
-              // Renderizar páginas do batch como JPEG
-              const images: { pageNum: number; base64: string; mediaType: string }[] = [];
-              for (let p = startPage; p <= endPage; p++) {
-                if (ocrCancelledRef.current) {
-                  throw new Error("Extração cancelada pelo usuário.");
-                }
-
-                const page = await pdf.getPage(p);
-                const viewport = page.getViewport({ scale: 2.0 });
-                const canvas = document.createElement("canvas");
-                canvas.width = viewport.width;
-                canvas.height = viewport.height;
-                const ctx = canvas.getContext("2d")!;
-                await page.render({
-                  canvasContext: ctx,
-                  viewport,
-                  canvas,
-                } as any).promise;
-
-                // JPEG 0.85 — alta qualidade para Claude Vision ler bem
-                const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
-                const base64 = dataUrl.split(",")[1] ?? "";
-
-                images.push({
-                  pageNum: p,
-                  base64,
-                  mediaType: "image/jpeg",
-                });
-
-                canvas.remove();
-                await new Promise((r) => setTimeout(r, 0));
-              }
-
-              // Enviar batch para Claude Vision
               setSaveProgress(
-                `Batch ${b + 1}/${totalBatches}: analisando com IA...`
+                `Renderizando páginas: ${i}/${totalPages}...`
               );
-              const res = await fetch("/api/pdf/extract-ai", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ images }),
-              });
 
-              if (!res.ok) {
-                const errJson = await safeJson(res);
-                throw new Error(
-                  (errJson.error as string) ||
-                    `Erro no batch ${b + 1}/${totalBatches}`
-                );
-              }
+              const page = await pdf.getPage(i);
+              const viewport = page.getViewport({ scale: 1.5 });
+              const canvas = document.createElement("canvas");
+              canvas.width = viewport.width;
+              canvas.height = viewport.height;
+              const ctx = canvas.getContext("2d")!;
+              await page.render({
+                canvasContext: ctx,
+                viewport,
+                canvas,
+              } as any).promise;
 
-              const data = (await safeJson(res)) as unknown as {
-                questions: ParsedQuestion[];
-              };
+              pageImages.push(canvas.toDataURL("image/jpeg", 0.75));
+              canvas.remove();
 
-              if (Array.isArray(data.questions)) {
-                allQuestions.push(...data.questions);
-              }
+              if (i % 5 === 0) await new Promise((r) => setTimeout(r, 0));
             }
+            const renderTime = ((Date.now() - startRender) / 1000).toFixed(0);
+            console.log(`Renderização: ${renderTime}s para ${totalPages} páginas`);
 
-            if (allQuestions.length === 0) {
-              throw new Error(
-                "IA não identificou questões nas páginas do PDF."
-              );
-            }
+            // 3. Enfileirar todas as páginas no scheduler — distribui entre workers
+            const startOCR = Date.now();
+            const allText: string[] = new Array(totalPages).fill("");
+            let completed = 0;
 
-            // Renumerar globalmente
-            const renumbered = allQuestions.map((q, idx) => ({
-              ...q,
-              order: idx + 1,
-            }));
+            const jobs = pageImages.map((imageData, idx) =>
+              scheduler.addJob("recognize", imageData).then((result: any) => {
+                allText[idx] = result.data.text ?? "";
+                completed++;
+                if (!ocrCancelledRef.current) {
+                  const elapsed = (Date.now() - startOCR) / 1000;
+                  const avgPerPage = elapsed / completed;
+                  const remaining = Math.ceil(
+                    ((totalPages - completed) * avgPerPage) / 60
+                  );
+                  setSaveProgress(
+                    `OCR: ${completed}/${totalPages} páginas (~${remaining} min restantes)`
+                  );
+                }
+              })
+            );
 
-            // Já temos as questões estruturadas — pular o parse text
-            setParseResult({
-              questions: renumbered,
-              count: renumbered.length,
-              areas: [],
+            // Polling pra cancelamento (scheduler não tem cancel nativo)
+            const cancelWatcher = new Promise<never>((_, reject) => {
+              const interval = setInterval(() => {
+                if (ocrCancelledRef.current) {
+                  clearInterval(interval);
+                  reject(new Error("OCR cancelado pelo usuário."));
+                }
+              }, 500);
+              Promise.all(jobs).finally(() => clearInterval(interval));
             });
+
+            try {
+              await Promise.race([Promise.all(jobs), cancelWatcher]);
+            } finally {
+              await scheduler.terminate();
+            }
+
+            textToParse = allText.filter((t) => t.trim()).join("\n\n");
+            const ocrTime = ((Date.now() - startOCR) / 1000).toFixed(0);
+            console.log(`OCR: ${ocrTime}s para ${totalPages} páginas`);
             setSaveProgress("");
-            setIsLoading(false);
-            return; // Não segue para o parse de texto
-          } catch (aiErr) {
-            console.error("Erro na extração IA:", aiErr);
+          } catch (ocrErr) {
+            console.error("Erro no OCR:", ocrErr);
             setSaveProgress("");
             if (
-              aiErr instanceof Error &&
-              aiErr.message === "Extração cancelada pelo usuário."
+              ocrErr instanceof Error &&
+              ocrErr.message === "OCR cancelado pelo usuário."
             ) {
-              throw aiErr;
+              throw ocrErr;
             }
             throw new Error(
-              aiErr instanceof Error
-                ? `Extração com IA falhou: ${aiErr.message}`
-                : "Extração com IA falhou. Tente novamente."
+              "OCR falhou. Tente colar o texto manualmente."
             );
           } finally {
             setOcrInProgress(false);
+          }
+
+          if (!textToParse.trim()) {
+            throw new Error(
+              "OCR não extraiu texto legível. Tente colar o texto manualmente."
+            );
           }
         }
       } else if (pastedText.trim()) {
