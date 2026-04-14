@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 
 /**
  * GET /api/questions?pacoteId=xxx
@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const supabase = (await createClient()) as any;
+    const supabase = createServiceClient() as any;
 
     const { data: questoes, error } = await supabase
       .from("questoes")
@@ -86,7 +86,7 @@ export async function PATCH(request: NextRequest) {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const supabase = (await createClient()) as any;
+    const supabase = createServiceClient() as any;
 
     // Atualiza a questão
     const questaoUpdate: Record<string, unknown> = {};

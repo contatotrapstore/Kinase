@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import {
   buildRanking,
   buildComparativeRanking,
@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const supabase = (await createClient()) as any;
+    const supabase = createServiceClient() as any;
 
     // Busca rankings com join em usuarios
     const { data, error } = await supabase
