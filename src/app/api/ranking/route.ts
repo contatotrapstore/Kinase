@@ -1,26 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
 import {
   buildRanking,
   buildComparativeRanking,
   type RankingEntry,
 } from "@/lib/ranking/calculator";
 
-const mockDoctors: Omit<RankingEntry, "position">[] = [
-  { userId: "u1", userName: "Dr. Ana Ferreira", totalScore: 950, totalCorrect: 47, totalAnswered: 50, accuracyPct: 94.0 },
-  { userId: "u2", userName: "Dr. Carlos Mendes", totalScore: 920, totalCorrect: 45, totalAnswered: 50, accuracyPct: 90.0 },
-  { userId: "u3", userName: "Dr. Beatriz Lima", totalScore: 890, totalCorrect: 44, totalAnswered: 50, accuracyPct: 88.0 },
-  { userId: "u4", userName: "Dr. Daniel Souza", totalScore: 860, totalCorrect: 42, totalAnswered: 50, accuracyPct: 84.0 },
-  { userId: "u5", userName: "Dr. Elena Rocha", totalScore: 840, totalCorrect: 41, totalAnswered: 50, accuracyPct: 82.0 },
-  { userId: "u6", userName: "Dr. Felipe Alves", totalScore: 810, totalCorrect: 39, totalAnswered: 48, accuracyPct: 81.3 },
-  { userId: "u7", userName: "Dr. Gabriela Costa", totalScore: 780, totalCorrect: 38, totalAnswered: 48, accuracyPct: 79.2 },
-  { userId: "u8", userName: "Dr. Henrique Dias", totalScore: 750, totalCorrect: 36, totalAnswered: 47, accuracyPct: 76.6 },
-  { userId: "u9", userName: "Dr. Isabela Martins", totalScore: 720, totalCorrect: 35, totalAnswered: 47, accuracyPct: 74.5 },
-  { userId: "u10", userName: "Dr. Jorge Oliveira", totalScore: 690, totalCorrect: 33, totalAnswered: 46, accuracyPct: 71.7 },
-];
-
 /**
  * GET /api/ranking?pacoteId=xxx&userId=yyy
- * Retorna ranking de usuários. Se userId fornecido, usa ranking comparativo.
+ * Retorna ranking real de usuários para um pacote.
+ * Se userId fornecido, usa ranking comparativo centrado nesse usuário.
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -34,18 +23,54 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  let ranking: RankingEntry[];
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const supabase = (await createClient()) as any;
 
-  if (userId) {
-    // Primeiro constrói ranking completo, depois filtra comparativo
-    const fullRanking = buildRanking(mockDoctors);
-    ranking = buildComparativeRanking(fullRanking, userId);
-  } else {
-    ranking = buildRanking(mockDoctors);
+    // Busca rankings com join em usuarios
+    const { data, error } = await supabase
+      .from("rankings")
+      .select("usuario_id, total_score, total_correct, total_answered, accuracy_pct, usuarios(name, phone)")
+      .eq("pacote_id", pacoteId)
+      .order("total_score", { ascending: false });
+
+    if (error) {
+      console.error("[api/ranking] Erro Supabase:", error);
+      return NextResponse.json(
+        { error: "Erro ao buscar ranking" },
+        { status: 500 }
+      );
+    }
+
+    const entries: Omit<RankingEntry, "position">[] = (data ?? []).map(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (row: any) => ({
+        userId: row.usuario_id,
+        userName: row.usuarios?.name ?? row.usuarios?.phone?.slice(-4) ?? "Anônimo",
+        totalScore: row.total_score ?? 0,
+        totalCorrect: row.total_correct ?? 0,
+        totalAnswered: row.total_answered ?? 0,
+        accuracyPct: Number(row.accuracy_pct ?? 0),
+      })
+    );
+
+    let ranking: RankingEntry[];
+    if (userId) {
+      const fullRanking = buildRanking(entries);
+      ranking = buildComparativeRanking(fullRanking, userId);
+    } else {
+      ranking = buildRanking(entries);
+    }
+
+    return NextResponse.json({
+      ranking,
+      total: ranking.length,
+    });
+  } catch (err) {
+    console.error("[api/ranking] Erro interno:", err);
+    return NextResponse.json(
+      { error: "Erro interno ao buscar ranking" },
+      { status: 500 }
+    );
   }
-
-  return NextResponse.json({
-    ranking,
-    total: ranking.length,
-  });
 }
