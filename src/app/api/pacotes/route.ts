@@ -104,10 +104,16 @@ export async function POST(request: NextRequest) {
       // Lotes seguintes — usar pacote existente
       pacoteIdToUse = existingPacoteId;
 
-      // Atualizar total_questions do pacote
+      // Atualizar total_questions do pacote — SOMA cumulativa
+      const { data: current } = await supabase
+        .from("pacotes")
+        .select("total_questions")
+        .eq("id", pacoteIdToUse)
+        .single();
+      const newTotal = (current?.total_questions ?? 0) + questions.length;
       await supabase
         .from("pacotes")
-        .update({ total_questions: questions.length })
+        .update({ total_questions: newTotal })
         .eq("id", pacoteIdToUse);
     }
 
@@ -219,12 +225,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Fire-and-forget: rewrite explanations in background
-    // Don't block the response - the user sees questions immediately
-    // Rewritten versions will be available when users interact via WhatsApp
-    rewriteExplanationsForPacote(pacoteIdToUse).catch((err) =>
-      console.error("Background rewrite error:", err)
-    );
+    // Reescrita IA desativada a pedido do cliente.
+    // A função rewriteExplanationsForPacote continua abaixo para futura reativação.
 
     return NextResponse.json({
       success: true,

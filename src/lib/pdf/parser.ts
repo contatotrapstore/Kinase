@@ -125,7 +125,7 @@ const QUESTION_START_RE =
  * Captura: group 1 = label (A-D), group 2 = texto (tudo até próxima alternativa
  * ou fim de seção)
  */
-const OPTION_LINE_RE = /(?:^|\n|[.?!]\s+|\s{2,})\(?\s*([A-Ea-e])\s*[).:\-–—]\s*/gi;
+const OPTION_LINE_RE = /(?:^|\n|[.?!;]\s*|\s{2,})\(?\s*([A-Ea-e])\s*[)\].:\-–—]\s*/gi;
 
 /**
  * Regex para o bloco COMENTÁRIO (pode usar acento ou não)
@@ -418,6 +418,35 @@ function parseGabaritoComentado(text: string): ParsedQuestion[] {
 // ---------------------------------------------------------------------------
 
 /**
+ * Normaliza texto extraído por OCR, corrigindo artefatos comuns:
+ * - "Respos ta" → "Resposta" (palavras quebradas por espaços extras)
+ * - "G a b a r i t o" → "Gabarito"
+ * Só reescreve onde a palavra completa é reconhecida (não afeta texto limpo).
+ */
+function normalizeOcrText(text: string): string {
+  const commonWords = [
+    "Resposta",
+    "Gabarito",
+    "Comentário",
+    "Comentario",
+    "Explicação",
+    "Explicacao",
+    "Questão",
+    "Questao",
+    "letra",
+    "correta",
+    "alternativa",
+  ];
+  let out = text;
+  for (const word of commonWords) {
+    // Permite 0-2 espaços entre cada par de letras
+    const pattern = word.split("").join("\\s{0,2}");
+    out = out.replace(new RegExp(pattern, "gi"), word);
+  }
+  return out;
+}
+
+/**
  * Faz o parse de texto extraído de PDF para um array de questões estruturadas.
  * Resiliente a diferentes formatos: ENAMED / Estratégia MED com áreas,
  * referências e comentários, além de formatos mais simples.
@@ -428,6 +457,9 @@ export function parsePdfText(text: string): ParsedQuestion[] {
   if (text.length > MAX_TEXT_SIZE) {
     text = text.slice(0, MAX_TEXT_SIZE);
   }
+
+  // Pré-normalização para tolerar ruído de OCR (palavras quebradas por espaços)
+  text = normalizeOcrText(text);
 
   // Normaliza quebras de linha e espaços extras (mantém \n)
   const normalized = text
