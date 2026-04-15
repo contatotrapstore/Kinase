@@ -472,6 +472,12 @@ function recoverOcrOptionLabels(text: string): string {
     /(^|\n|[.?!;:]\s|\s{2,})A[J\]l|]\s+(?=[A-Za-z0-9ÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
     "$1\nA) ",
   );
+  // "AJA" — AJ colado sem espaço com palavra (lookahead Maiúscula+minúscula)
+  // Captura "AJA vacina", "AJEm 2017", etc.
+  out = out.replace(
+    /(^|\n|[.?!;:]\s|\s{2,})A[J\]l|](?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç])/g,
+    "$1\nA) ",
+  );
 
   // --- B) ---
   // "BJ ", "B] " — B maiúsculo + cierre corrupto
@@ -479,9 +485,19 @@ function recoverOcrOptionLabels(text: string): string {
     /(^|\n|[.?!;:]\s|\s{2,})B[J\]l|]\s+(?=[A-Za-z0-9ÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
     "$1\nB) ",
   );
+  // "BJA" — BJ colado sem espaço
+  out = out.replace(
+    /(^|\n|[.?!;:]\s|\s{2,})B[J\]l|](?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç])/g,
+    "$1\nB) ",
+  );
   // "6)" como início de opção (após pontuação/quebra)
   out = out.replace(
     /(^|\n|[.?!;:]\s|\s{2,})6\)\s+(?=[A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
+    "$1\nB) ",
+  );
+  // "8)" como início de opção (B confundido com 8)
+  out = out.replace(
+    /(^|\n|[.?!;:]\s|\s{2,})8\)\s+(?=[A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
     "$1\nB) ",
   );
 
@@ -507,6 +523,11 @@ function recoverOcrOptionLabels(text: string): string {
   // "DJ)", "DJ ", "D]", "Dl" — D maiúsculo + cierre corrupto, opcionalmente com ")"
   out = out.replace(
     /(^|\n|[.?!;:]\s|\s{2,})D[J\]l|]\)?\s+(?=[A-Za-z0-9ÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
+    "$1\nD) ",
+  );
+  // "DJA" — DJ colado sem espaço
+  out = out.replace(
+    /(^|\n|[.?!;:]\s|\s{2,})D[J\]l|]\)?(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç])/g,
     "$1\nD) ",
   );
 
@@ -796,23 +817,51 @@ function parseQuestionBlock(
   // ----- Detecta imagem -----
   const hasImage = IMAGE_KEYWORDS_RE.test(block);
 
-  // ----- Fallback: tenta padrões de gabarito adicionais -----
-  if (!correctLabel && options.length > 0) {
-    // Procura no bloco completo por padrões alternativos
+  // ----- Detectar questão anulada (legitimamente sem gabarito) -----
+  const isAnulada = /\banulad[ao]|anula[çc][aã]o|sem\s+resposta\s+correta|n[aã]o\s+h[aá]\s+alternativa\s+(?:que\s+responda\s+)?correta?/i.test(
+    `${block} ${explanation ?? ""}`,
+  );
+
+  // ----- Fallback agressivo: tenta padrões de gabarito adicionais -----
+  // Só roda se a questão NÃO é anulada
+  if (!correctLabel && options.length > 0 && !isAnulada) {
+    // Procura tanto no block completo quanto na explicação
+    const haystack = `${block}\n${explanation ?? ""}`;
+
+    // Padrões em ordem de especificidade (mais específico primeiro)
     const altPatterns = [
-      /(?:gabarito|resposta|alternativa correta)\s*:?\s*([A-Ea-e])/i,
-      /\b(?:letra|alternativa)\s+([A-Ea-e])\b/i,
+      // "alternativa correta é a letra X" / "alternativa correta: letra X"
+      /alternativa\s+(?:correta|certa)\s*[:.]?\s*(?:é\s+)?(?:a\s+)?(?:letra\s+)?([A-DÀÁÂÃa-dàáâã])\b/i,
+      // "letra X é (a) correta/certa"
+      /letra\s+([A-DÀÁÂÃa-dàáâã])\s+(?:é\s+)?(?:a\s+)?(?:correta|certa|verdadeira)/i,
+      // "considerou/considera a alternativa X" / "gabaritou X" / "considere X correta"
+      /(?:considerou|considerar?|gabarit[eo]u?|considere)\s+(?:a\s+)?(?:alternativa\s+)?(?:letra\s+)?([A-DÀÁÂÃa-dàáâã])\b/i,
+      // "Resposta: letra X" / "Resposta: X" / "Resposta letra X" (com À/Á acentuada)
+      /(?:gabarito|resposta)\s*[:.]?\s*(?:letra\s+)?([A-DÀÁÂÃa-dàáâã])\b/i,
+      // "letra X" / "alternativa X" sozinhos (último recurso)
+      /\b(?:letra|alternativa)\s+([A-DÀÁÂÃa-dàáâã])\b/i,
     ];
+
+    // Mapear letras acentuadas para canônicas (À/Á/Â/Ã → A)
+    const ACCENT_MAP: Record<string, string> = {
+      "À": "A", "Á": "A", "Â": "A", "Ã": "A",
+      "à": "A", "á": "A", "â": "A", "ã": "A",
+    };
+
     for (const pat of altPatterns) {
-      const m = block.match(pat);
+      const m = haystack.match(pat);
       if (m) {
-        const cl = m[1].toUpperCase();
+        let cl = m[1].toUpperCase();
+        if (ACCENT_MAP[cl]) cl = ACCENT_MAP[cl];
+        // Só A-D (E não existe nas opções salvas)
+        if (cl !== "A" && cl !== "B" && cl !== "C" && cl !== "D") continue;
         const opt = options.find((o) => o.label === cl);
         if (opt) {
           options.forEach((o) => (o.isCorrect = false));
           opt.isCorrect = true;
+          correctLabel = cl;
+          break;
         }
-        break;
       }
     }
   }
