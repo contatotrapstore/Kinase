@@ -829,32 +829,35 @@ function parseQuestionBlock(
     // Procura tanto no block completo quanto na explicação
     const haystack = `${block}\n${explanation ?? ""}`;
 
-    // Padrões em ordem de especificidade (mais específico primeiro)
-    const altPatterns = [
-      // "alternativa correta é a letra X" / "alternativa correta: letra X"
-      /alternativa\s+(?:correta|certa)\s*[:.]?\s*(?:é\s+)?(?:a\s+)?(?:letra\s+)?([A-DÀÁÂÃa-dàáâã])\b/i,
-      // "letra X é (a) correta/certa"
-      /letra\s+([A-DÀÁÂÃa-dàáâã])\s+(?:é\s+)?(?:a\s+)?(?:correta|certa|verdadeira)/i,
-      // "considerou/considera a alternativa X" / "gabaritou X" / "considere X correta"
-      /(?:considerou|considerar?|gabarit[eo]u?|considere)\s+(?:a\s+)?(?:alternativa\s+)?(?:letra\s+)?([A-DÀÁÂÃa-dàáâã])\b/i,
-      // "Resposta: letra X" / "Resposta: X" / "Resposta letra X" (com À/Á acentuada)
-      /(?:gabarito|resposta)\s*[:.]?\s*(?:letra\s+)?([A-DÀÁÂÃa-dàáâã])\b/i,
-      // "letra X" / "alternativa X" sozinhos (último recurso)
-      /\b(?:letra|alternativa)\s+([A-DÀÁÂÃa-dàáâã])\b/i,
-    ];
-
     // Mapear letras acentuadas para canônicas (À/Á/Â/Ã → A)
     const ACCENT_MAP: Record<string, string> = {
       "À": "A", "Á": "A", "Â": "A", "Ã": "A",
       "à": "A", "á": "A", "â": "A", "ã": "A",
     };
 
-    for (const pat of altPatterns) {
+    // Padrões POSITIVOS — só capturam quando há indicação explícita de "correta"
+    // Ordem importa: mais específico primeiro
+    const positivePatterns = [
+      // "alternativa correta é a letra X" / "alternativa correta: X"
+      /alternativa\s+(?:correta|certa)\s*[:.\s]+(?:é\s+)?(?:a\s+)?(?:letra\s+)?([A-DÀÁÂÃa-dàáâã])\b/i,
+      // "letra X" + qualquer pontuação/espaço + "correta/certa"
+      // Cobre: "letra B é correta", "letra B - correta", "letra B: correta"
+      /letra\s+([A-DÀÁÂÃa-dàáâã])\s*[-:.,–—\s]+(?:é\s+)?(?:a\s+)?(?:correta|certa|verdadeira)\b/i,
+      // "(letra X - correta)" — variação com parênteses
+      /\(\s*letra\s+([A-DÀÁÂÃa-dàáâã])\s*[-:.\s]+(?:correta|certa)/i,
+      // "alternativa X é (a) correta"
+      /alternativa\s+([A-DÀÁÂÃa-dàáâã])\s+(?:é\s+)?(?:a\s+)?(?:correta|certa|verdadeira)/i,
+      // "considerou/banca considerou a alternativa X"
+      /(?:banca\s+)?considerou\s+(?:a\s+)?(?:alternativa\s+|letra\s+)?([A-DÀÁÂÃa-dàáâã])\s+(?:como\s+)?(?:correta|certa)?/i,
+      // "Resposta: letra X" / "Resposta: X" / "Resposta letra X" / "Gabarito X"
+      /(?:gabarito|resposta)\s*[:.]?\s*(?:letra\s+)?([A-DÀÁÂÃa-dàáâã])\b/i,
+    ];
+
+    for (const pat of positivePatterns) {
       const m = haystack.match(pat);
       if (m) {
         let cl = m[1].toUpperCase();
         if (ACCENT_MAP[cl]) cl = ACCENT_MAP[cl];
-        // Só A-D (E não existe nas opções salvas)
         if (cl !== "A" && cl !== "B" && cl !== "C" && cl !== "D") continue;
         const opt = options.find((o) => o.label === cl);
         if (opt) {
