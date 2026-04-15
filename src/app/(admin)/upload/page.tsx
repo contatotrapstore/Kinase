@@ -476,6 +476,7 @@ export default function UploadPage() {
           order: q.order,
           text: q.text,
           options: q.options,
+          explanation: q.explanation,
           hasImage: q.hasImage,
         }));
 

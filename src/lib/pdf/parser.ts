@@ -447,6 +447,75 @@ function normalizeOcrText(text: string): string {
 }
 
 /**
+ * Recupera labels de opções (A/B/C/D) corrompidas por OCR.
+ *
+ * Padrões comuns de erro OCR observados em scans de provas médicas:
+ *   - "A)" → "AJ", "A]", "Al", "Aj"  (parêntese fechando vira J/]/l)
+ *   - "B)" → "BJ", "B]", "6)", "8)"  (B vira 6 ou 8)
+ *   - "C)" → "O)", "OC)", "0)", "C]" (C vira O ou 0)
+ *   - "D)" → "DJ", "D]", "0)", "Dl"  (D vira 0)
+ *
+ * Esta função normaliza esses padrões para a forma canônica "X)" antes do regex parser
+ * tentar extrair as alternativas. É **conservadora**: só substitui quando há contexto
+ * claro de início de opção (após quebra de linha, pontuação ou múltiplos espaços).
+ */
+function recoverOcrOptionLabels(text: string): string {
+  let out = text;
+
+  // Helper: precede o token sempre com `\n` para garantir que OPTION_LINE_RE case
+  // O lookbehind aceita: início de string, quebra de linha, ponto/exclamação/interrogação,
+  // ponto-e-vírgula, ou 2+ espaços.
+
+  // --- A) ---
+  // "AJ ", "A] ", "Al " (Al pode ser "A1" mal lido também) seguidos de espaço + maiúscula
+  out = out.replace(
+    /(^|\n|[.?!;]\s|\s{2,})A[J\]l|]\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/g,
+    "$1\nA) ",
+  );
+
+  // --- B) ---
+  // "BJ ", "B] " seguidos de maiúscula
+  out = out.replace(
+    /(^|\n|[.?!;]\s|\s{2,})B[J\]l|]\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/g,
+    "$1\nB) ",
+  );
+  // "6)" precedido de A) recente (até 500 chars antes) e seguido de maiúscula
+  // Para evitar substituir "6)" legítimo (ano 2006), só substituir se o caractere
+  // seguinte for um espaço + maiúscula (típico de opção)
+  out = out.replace(
+    /(^|\n|[.?!;]\s|\s{2,})6\)\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/g,
+    "$1\nB) ",
+  );
+
+  // --- C) ---
+  // "OC)" — letra duplicada, OCR leu "C)" como "OC)"
+  out = out.replace(
+    /(^|\n|[.?!;]\s|\s{2,})OC\)/g,
+    "$1\nC)",
+  );
+  // "O)" como início de opção (depois de pontuação/quebra) seguido de maiúscula
+  out = out.replace(
+    /(^|\n|[.?!;]\s|\s{2,})O\)\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/g,
+    "$1\nC) ",
+  );
+  // "O " (sem parêntese) entre opções B) e D) — heurística mais arriscada
+  // Só aplicar se a frase terminar em ponto/quebra antes do "O"
+  out = out.replace(
+    /([.?!]\s)O\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóú0-9]{2,})/g,
+    "$1\nC) ",
+  );
+
+  // --- D) ---
+  // "DJ)", "DJ ", "D]" seguidos de maiúscula
+  out = out.replace(
+    /(^|\n|[.?!;]\s|\s{2,})D[J\]l|]\)?\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/g,
+    "$1\nD) ",
+  );
+
+  return out;
+}
+
+/**
  * Faz o parse de texto extraído de PDF para um array de questões estruturadas.
  * Resiliente a diferentes formatos: ENAMED / Estratégia MED com áreas,
  * referências e comentários, além de formatos mais simples.
@@ -460,6 +529,8 @@ export function parsePdfText(text: string): ParsedQuestion[] {
 
   // Pré-normalização para tolerar ruído de OCR (palavras quebradas por espaços)
   text = normalizeOcrText(text);
+  // Recuperar labels de opções A/B/C/D corrompidas por OCR (AJ → A), OC) → C), etc.)
+  text = recoverOcrOptionLabels(text);
 
   // Normaliza quebras de linha e espaços extras (mantém \n)
   const normalized = text
