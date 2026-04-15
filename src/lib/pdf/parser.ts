@@ -525,15 +525,36 @@ function recoverOcrOptionLabels(text: string): string {
     /(^|\n|[.?!;:]\s|\s{2,})OC\)/g,
     "$1\nC)",
   );
+  // "CJ)" / "C]" — C com cierre corrupto (igual aos casos AJ/BJ/DJ)
+  out = out.replace(
+    /(^|\n|[.?!;:]\s|\s{2,})C[J\]l|]\)?\s+(?=[A-Za-z0-9ÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
+    "$1\nC) ",
+  );
+  // "CJA" — CJ colado sem espaço
+  out = out.replace(
+    /(^|\n|[.?!;:]\s|\s{2,})C[J\]l|]\)?(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/g,
+    "$1\nC) ",
+  );
   // "O)" como início de opção (em contexto de início de linha)
   out = out.replace(
     /(^|\n|[.?!;:]\s|\s{2,})O\)\s+(?=[A-Za-z0-9ÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
+    "$1\nC) ",
+  );
+  // "0)" — C confundido com zero (visualmente similar)
+  out = out.replace(
+    /(^|\n|[.?!;:]\s|\s{2,})0\)\s+(?=[A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
     "$1\nC) ",
   );
   // "O " (sem parêntese) iniciando opção — só após ponto+espaço (frase anterior terminou)
   // Lookahead exige token de pelo menos 3 chars (não "O é", "O é", etc.).
   out = out.replace(
     /([.?!]\s)O\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç0-9]{2,})/g,
+    "$1\nC) ",
+  );
+  // "C " (sem parêntese) — letra C sozinha seguida de número (Q113: "C 10%")
+  // Conservador: só após ponto+espaço E só se seguido de número (raro em texto comum)
+  out = out.replace(
+    /([.?!]\s)C\s+(?=\d)/g,
     "$1\nC) ",
   );
 
