@@ -462,53 +462,51 @@ function normalizeOcrText(text: string): string {
 function recoverOcrOptionLabels(text: string): string {
   let out = text;
 
-  // Helper: precede o token sempre com `\n` para garantir que OPTION_LINE_RE case
-  // O lookbehind aceita: início de string, quebra de linha, ponto/exclamação/interrogação,
-  // ponto-e-vírgula, ou 2+ espaços.
+  // Lookbehind aceita: início de string, quebra de linha, pontuação, ou 2+ espaços.
+  // Lookahead aceita qualquer caractere alfanumérico (maiúscula, minúscula ou dígito)
+  // — opções podem começar com texto minúsculo ("amoxicilina"), número ("12h"), etc.
 
   // --- A) ---
-  // "AJ ", "A] ", "Al " (Al pode ser "A1" mal lido também) seguidos de espaço + maiúscula
+  // "AJ ", "A] ", "Al " — A maiúsculo + caractere de cierre OCR-corrupto (J/]/l/|)
   out = out.replace(
-    /(^|\n|[.?!;]\s|\s{2,})A[J\]l|]\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/g,
+    /(^|\n|[.?!;:]\s|\s{2,})A[J\]l|]\s+(?=[A-Za-z0-9ÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
     "$1\nA) ",
   );
 
   // --- B) ---
-  // "BJ ", "B] " seguidos de maiúscula
+  // "BJ ", "B] " — B maiúsculo + cierre corrupto
   out = out.replace(
-    /(^|\n|[.?!;]\s|\s{2,})B[J\]l|]\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/g,
+    /(^|\n|[.?!;:]\s|\s{2,})B[J\]l|]\s+(?=[A-Za-z0-9ÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
     "$1\nB) ",
   );
-  // "6)" precedido de A) recente (até 500 chars antes) e seguido de maiúscula
-  // Para evitar substituir "6)" legítimo (ano 2006), só substituir se o caractere
-  // seguinte for um espaço + maiúscula (típico de opção)
+  // "6)" como início de opção (após pontuação/quebra)
   out = out.replace(
-    /(^|\n|[.?!;]\s|\s{2,})6\)\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/g,
+    /(^|\n|[.?!;:]\s|\s{2,})6\)\s+(?=[A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
     "$1\nB) ",
   );
 
   // --- C) ---
-  // "OC)" — letra duplicada, OCR leu "C)" como "OC)"
+  // "OC)" — letra duplicada (OCR leu "C)" como "OC)")
   out = out.replace(
-    /(^|\n|[.?!;]\s|\s{2,})OC\)/g,
+    /(^|\n|[.?!;:]\s|\s{2,})OC\)/g,
     "$1\nC)",
   );
-  // "O)" como início de opção (depois de pontuação/quebra) seguido de maiúscula
+  // "O)" como início de opção (em contexto de início de linha)
   out = out.replace(
-    /(^|\n|[.?!;]\s|\s{2,})O\)\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/g,
+    /(^|\n|[.?!;:]\s|\s{2,})O\)\s+(?=[A-Za-z0-9ÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
     "$1\nC) ",
   );
-  // "O " (sem parêntese) entre opções B) e D) — heurística mais arriscada
-  // Só aplicar se a frase terminar em ponto/quebra antes do "O"
+  // "O " (sem parêntese) iniciando opção — só após ponto+espaço (frase anterior terminou)
+  // Lookahead exige token de pelo menos 3 chars (não "O é", "O é", etc.).
   out = out.replace(
-    /([.?!]\s)O\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóú0-9]{2,})/g,
+    /([.?!]\s)O\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç0-9]{2,})/g,
     "$1\nC) ",
   );
 
   // --- D) ---
-  // "DJ)", "DJ ", "D]" seguidos de maiúscula
+  // "DJ)", "DJ ", "D]", "Dl" — D maiúsculo + cierre corrupto, opcionalmente com ")"
   out = out.replace(
-    /(^|\n|[.?!;]\s|\s{2,})D[J\]l|]\)?\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/g,
+    /(^|\n|[.?!;:]\s|\s{2,})D[J\]l|]\)?\s+(?=[A-Za-z0-9ÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
     "$1\nD) ",
   );
 
