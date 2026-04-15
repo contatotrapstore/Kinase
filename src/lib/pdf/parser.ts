@@ -472,10 +472,11 @@ function recoverOcrOptionLabels(text: string): string {
     /(^|\n|[.?!;:]\s|\s{2,})A[J\]l|]\s+(?=[A-Za-z0-9ÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
     "$1\nA) ",
   );
-  // "AJA" — AJ colado sem espaço com palavra (lookahead Maiúscula+minúscula)
-  // Captura "AJA vacina", "AJEm 2017", etc.
+  // "AJA" — AJ colado sem espaço com palavra (lookahead aceita maiúscula isolada)
+  // Captura "AJA vacina", "AJEm 2017", etc. O lookbehind já garante contexto seguro
+  // (após pontuação/quebra), evitando match em "MAJ" ou meio de palavra.
   out = out.replace(
-    /(^|\n|[.?!;:]\s|\s{2,})A[J\]l|](?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç])/g,
+    /(^|\n|[.?!;:]\s|\s{2,})A[J\]l|](?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/g,
     "$1\nA) ",
   );
 
@@ -485,19 +486,19 @@ function recoverOcrOptionLabels(text: string): string {
     /(^|\n|[.?!;:]\s|\s{2,})B[J\]l|]\s+(?=[A-Za-z0-9ÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
     "$1\nB) ",
   );
-  // "BJA" — BJ colado sem espaço
+  // "BJA" — BJ colado sem espaço (lookahead aceita maiúscula isolada)
   out = out.replace(
-    /(^|\n|[.?!;:]\s|\s{2,})B[J\]l|](?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç])/g,
+    /(^|\n|[.?!;:]\s|\s{2,})B[J\]l|](?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/g,
     "$1\nB) ",
   );
-  // "6)" como início de opção (após pontuação/quebra)
+  // "6)" como início de opção (após pontuação/quebra) — aceita dígitos também
   out = out.replace(
-    /(^|\n|[.?!;:]\s|\s{2,})6\)\s+(?=[A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
+    /(^|\n|[.?!;:]\s|\s{2,})6\)\s+(?=[A-Za-z0-9ÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
     "$1\nB) ",
   );
-  // "8)" como início de opção (B confundido com 8)
+  // "8)" como início de opção (B confundido com 8) — aceita dígitos também
   out = out.replace(
-    /(^|\n|[.?!;:]\s|\s{2,})8\)\s+(?=[A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
+    /(^|\n|[.?!;:]\s|\s{2,})8\)\s+(?=[A-Za-z0-9ÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
     "$1\nB) ",
   );
 
@@ -525,9 +526,9 @@ function recoverOcrOptionLabels(text: string): string {
     /(^|\n|[.?!;:]\s|\s{2,})D[J\]l|]\)?\s+(?=[A-Za-z0-9ÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç])/g,
     "$1\nD) ",
   );
-  // "DJA" — DJ colado sem espaço
+  // "DJA" — DJ colado sem espaço (lookahead aceita maiúscula isolada)
   out = out.replace(
-    /(^|\n|[.?!;:]\s|\s{2,})D[J\]l|]\)?(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç])/g,
+    /(^|\n|[.?!;:]\s|\s{2,})D[J\]l|]\)?(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/g,
     "$1\nD) ",
   );
 
