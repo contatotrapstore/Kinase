@@ -400,10 +400,27 @@ function parseGabaritoComentado(text: string): ParsedQuestion[] {
         .trim() || undefined;
     }
 
+    // ---- Sanitização final das opções ----
+    // 1. Remover opções com texto vazio (lixo de OCR / LETRA_ALT_RE sem texto)
+    const cleanOptions = options.filter(
+      (o) => o.text && o.text.trim().length > 0,
+    );
+
+    // 2. Garantir que NO MÁXIMO uma opção é correta
+    //    (caso de OCR corrompido marcando múltiplas)
+    const correctOpts = cleanOptions.filter((o) => o.isCorrect);
+    if (correctOpts.length > 1) {
+      // Múltiplas marcadas — desmarcar todas (deixar pro fallback)
+      cleanOptions.forEach((o) => (o.isCorrect = false));
+    }
+
+    // 3. Descartar a questão inteira se ficar com 0 opções válidas
+    if (cleanOptions.length === 0) continue;
+
     questions.push({
       order: header.order,
       text: questionText,
-      options,
+      options: cleanOptions,
       explanation: explanationText,
       hasImage,
       reference: header.source,
@@ -880,10 +897,25 @@ function parseQuestionBlock(
     if (!explanation) explanation = undefined;
   }
 
+  // ---- Sanitização final das opções ----
+  // 1. Remover opções com texto vazio
+  const cleanOptions = options.filter(
+    (o) => o.text && o.text.trim().length > 0,
+  );
+
+  // 2. Garantir no máximo 1 opção correta (caso OCR corrompa)
+  const correctOpts = cleanOptions.filter((o) => o.isCorrect);
+  if (correctOpts.length > 1) {
+    cleanOptions.forEach((o) => (o.isCorrect = false));
+  }
+
+  // 3. Descartar a questão se ficar sem opções
+  if (cleanOptions.length === 0) return null;
+
   return {
     order,
     text: questionText,
-    options,
+    options: cleanOptions,
     explanation,
     hasImage,
     areaConhecimento: area,

@@ -20,6 +20,9 @@ import {
   Pencil,
   Save,
   X,
+  Trash2,
+  Plus,
+  AlertTriangle,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
@@ -54,12 +57,29 @@ const statusConfig: Record<string, { label: string; className: string }> = {
   error: { label: "Erro", className: "bg-red-100 text-red-800 border-red-200" },
 };
 
+type QuestionStatus = "perfect" | "no_gabarito" | "incomplete";
+
+function getQuestionStatus(q: Question): QuestionStatus {
+  const validOpts = q.options.filter((o) => o.text.trim().length > 0);
+  if (validOpts.length < 4) return "incomplete";
+  if (!q.options.some((o) => o.isCorrect)) return "no_gabarito";
+  return "perfect";
+}
+
+const statusBadge: Record<QuestionStatus, { label: string; className: string; icon: typeof CheckCircle }> = {
+  perfect: { label: "OK", className: "bg-emerald-100 text-emerald-700 border-emerald-200", icon: CheckCircle },
+  no_gabarito: { label: "Sem gabarito", className: "bg-amber-100 text-amber-700 border-amber-200", icon: AlertTriangle },
+  incomplete: { label: "Incompleta", className: "bg-red-100 text-red-700 border-red-200", icon: XCircle },
+};
+
 function QuestionCard({
   question,
   onSave,
+  onDelete,
 }: {
   question: Question;
   onSave: (updated: Question) => Promise<boolean>;
+  onDelete: (id: string) => Promise<boolean>;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -72,6 +92,9 @@ function QuestionCard({
   const [editOptions, setEditOptions] = useState<QuestionOption[]>(
     question.options.map((o) => ({ ...o }))
   );
+
+  const status = getQuestionStatus(question);
+  const StatusIcon = statusBadge[status].icon;
 
   function startEditing() {
     setEditText(question.text);
@@ -98,6 +121,25 @@ function QuestionCard({
     );
   }
 
+  function addOption() {
+    const usedLetters = new Set(editOptions.map((o) => o.letter));
+    const nextLetter = ["A", "B", "C", "D"].find((l) => !usedLetters.has(l));
+    if (!nextLetter) return; // já tem A-D
+    setEditOptions((prev) => [
+      ...prev,
+      { id: `new-${Date.now()}`, letter: nextLetter, text: "", isCorrect: false },
+    ].sort((a, b) => a.letter.localeCompare(b.letter)));
+  }
+
+  function removeOption(index: number) {
+    setEditOptions((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  async function handleDelete() {
+    if (!confirm(`Deletar a questão #${question.number}? Esta ação não pode ser desfeita.`)) return;
+    await onDelete(question.id);
+  }
+
   async function handleSave() {
     setSaving(true);
     const updated: Question = {
@@ -119,16 +161,22 @@ function QuestionCard({
     <div className="rounded-lg border border-border">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="flex w-full items-center justify-between p-4 text-left hover:bg-muted/50 transition-colors"
+        className="flex w-full items-center justify-between gap-3 p-4 text-left hover:bg-muted/50 transition-colors"
       >
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
             {question.number}
           </span>
-          <span className="text-sm font-medium text-foreground line-clamp-1">
+          <span className="truncate text-sm font-medium text-foreground">
             {question.text}
           </span>
         </div>
+        <span
+          className={`hidden shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold sm:inline-flex ${statusBadge[status].className}`}
+        >
+          <StatusIcon className="h-3 w-3" />
+          {statusBadge[status].label}
+        </span>
         {isExpanded ? (
           <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
         ) : (
@@ -138,24 +186,34 @@ function QuestionCard({
 
       {isExpanded && (
         <div className="border-t border-border px-4 pb-4 pt-3">
-          {/* Header row: edit button + feedback */}
-          <div className="mb-3 flex items-center justify-between">
-            {feedback && (
-              <span className="text-xs font-medium text-emerald-600">
-                {feedback}
-              </span>
+          {/* Header row: edit/delete buttons + feedback */}
+          <div className="mb-3 flex items-center justify-between gap-2">
+            {feedback ? (
+              <span className="text-xs font-medium text-emerald-600">{feedback}</span>
+            ) : (
+              <span />
             )}
-            {!feedback && <span />}
             {!isEditing && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={startEditing}
-                className="h-7 gap-1 text-xs text-muted-foreground"
-              >
-                <Pencil className="h-3.5 w-3.5" />
-                Editar
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={startEditing}
+                  className="h-7 gap-1 text-xs text-muted-foreground"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  Editar
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleDelete}
+                  className="h-7 gap-1 text-xs text-muted-foreground hover:text-red-600 hover:bg-red-50"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Deletar
+                </Button>
+              </div>
             )}
           </div>
 
@@ -173,7 +231,7 @@ function QuestionCard({
               <div className="space-y-2">
                 {editOptions.map((option, idx) => (
                   <div
-                    key={option.letter}
+                    key={option.id || option.letter}
                     className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm cursor-pointer ${
                       option.isCorrect
                         ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
@@ -193,8 +251,28 @@ function QuestionCard({
                       onClick={(e) => e.stopPropagation()}
                       className="h-7 text-sm"
                     />
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); removeOption(idx); }}
+                      className="shrink-0 rounded p-1 text-muted-foreground hover:bg-red-50 hover:text-red-600"
+                      title="Remover opção"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
                   </div>
                 ))}
+                {editOptions.length < 4 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={addOption}
+                    className="h-7 w-full justify-center gap-1 border border-dashed border-border text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Adicionar opção
+                  </Button>
+                )}
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
                 Clique na opcao para marcar como correta
@@ -296,6 +374,7 @@ export default function BankDetailPage() {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [filterStatus, setFilterStatus] = useState<"all" | QuestionStatus>("all");
 
   useEffect(() => {
     async function fetchData() {
@@ -389,6 +468,29 @@ export default function BankDetailPage() {
     );
   }
 
+  async function handleDeleteQuestion(questionId: string): Promise<boolean> {
+    try {
+      // Cascade: deletar opcoes primeiro
+      await (supabase.from("opcoes") as any).delete().eq("questao_id", questionId);
+      const { error } = await (supabase.from("questoes") as any).delete().eq("id", questionId);
+      if (error) {
+        console.error("Erro ao deletar questao:", error);
+        return false;
+      }
+      setQuestions((prev) => prev.filter((q) => q.id !== questionId));
+      // Atualizar total_questions do pacote
+      if (bank) {
+        const newTotal = questions.length - 1;
+        await (supabase.from("pacotes") as any).update({ total_questions: newTotal }).eq("id", bank.id);
+        setBank({ ...bank, totalQuestions: newTotal });
+      }
+      return true;
+    } catch (err) {
+      console.error("Erro ao deletar questao:", err);
+      return false;
+    }
+  }
+
   async function handleSaveQuestion(updated: Question): Promise<boolean> {
     try {
       // Update questao text and explanation
@@ -402,22 +504,63 @@ export default function BankDetailPage() {
         return false;
       }
 
-      // Update each opcao
-      for (const opt of updated.options) {
-        const { error: oError } = await (supabase
-          .from("opcoes") as any)
-          .update({ text: opt.text, is_correct: opt.isCorrect })
-          .eq("id", opt.id);
+      // Buscar opções existentes para detectar removidas
+      const existingOpts = questions.find((q) => q.id === updated.id)?.options ?? [];
+      const updatedIds = new Set(updated.options.map((o) => o.id));
+      const removedIds = existingOpts
+        .filter((o) => !updatedIds.has(o.id) && !o.id.startsWith("new-"))
+        .map((o) => o.id);
 
-        if (oError) {
-          console.error("Erro ao atualizar opcao:", oError);
-          return false;
+      // Deletar opções removidas
+      if (removedIds.length > 0) {
+        await (supabase.from("opcoes") as any).delete().in("id", removedIds);
+      }
+
+      // Update / insert each opcao
+      for (const opt of updated.options) {
+        if (opt.id.startsWith("new-")) {
+          // Nova opção — INSERT
+          const { error: insErr } = await (supabase.from("opcoes") as any).insert({
+            questao_id: updated.id,
+            label: opt.letter,
+            text: opt.text,
+            is_correct: opt.isCorrect,
+          });
+          if (insErr) {
+            console.error("Erro ao inserir opcao:", insErr);
+            return false;
+          }
+        } else {
+          const { error: oError } = await (supabase
+            .from("opcoes") as any)
+            .update({ text: opt.text, is_correct: opt.isCorrect })
+            .eq("id", opt.id);
+          if (oError) {
+            console.error("Erro ao atualizar opcao:", oError);
+            return false;
+          }
         }
       }
 
-      // Update local state
+      // Recarregar opções do banco para pegar IDs reais (das novas)
+      const { data: refreshedOpts } = await (supabase
+        .from("opcoes") as any)
+        .select("id, label, text, is_correct")
+        .eq("questao_id", updated.id);
+
+      const refreshedQuestion: Question = {
+        ...updated,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        options: (refreshedOpts ?? []).sort((a: any, b: any) => a.label.localeCompare(b.label)).map((o: any) => ({
+          id: o.id,
+          letter: o.label,
+          text: o.text,
+          isCorrect: o.is_correct,
+        })),
+      };
+
       setQuestions((prev) =>
-        prev.map((q) => (q.id === updated.id ? updated : q))
+        prev.map((q) => (q.id === updated.id ? refreshedQuestion : q))
       );
 
       return true;
@@ -428,6 +571,18 @@ export default function BankDetailPage() {
   }
 
   const status = statusConfig[bank.status] ?? statusConfig.pending;
+
+  // Contadores de status das questões
+  const stats = {
+    perfect: questions.filter((q) => getQuestionStatus(q) === "perfect").length,
+    no_gabarito: questions.filter((q) => getQuestionStatus(q) === "no_gabarito").length,
+    incomplete: questions.filter((q) => getQuestionStatus(q) === "incomplete").length,
+  };
+
+  // Lista filtrada
+  const visibleQuestions = filterStatus === "all"
+    ? questions
+    : questions.filter((q) => getQuestionStatus(q) === filterStatus);
 
   return (
     <div className="space-y-6">
@@ -450,8 +605,24 @@ export default function BankDetailPage() {
           </Badge>
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
-          {bank.materia} &middot; {bank.totalQuestions} questoes
+          {bank.materia} &middot; {questions.length} questoes
         </p>
+
+        {/* Resumo de qualidade */}
+        <div className="mt-3 flex flex-wrap gap-2">
+          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
+            <CheckCircle className="h-3 w-3" />
+            {stats.perfect} OK
+          </span>
+          <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
+            <AlertTriangle className="h-3 w-3" />
+            {stats.no_gabarito} sem gabarito
+          </span>
+          <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-700">
+            <XCircle className="h-3 w-3" />
+            {stats.incomplete} incompletas
+          </span>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -462,17 +633,56 @@ export default function BankDetailPage() {
         </TabsList>
 
         <TabsContent value="questoes" className="mt-4">
-          {questions.length === 0 ? (
+          {/* Filtro por status */}
+          <div className="mb-3 flex flex-wrap gap-2">
+            <Button
+              variant={filterStatus === "all" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setFilterStatus("all")}
+              className="h-7 text-xs"
+            >
+              Todas ({questions.length})
+            </Button>
+            <Button
+              variant={filterStatus === "perfect" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setFilterStatus("perfect")}
+              className="h-7 text-xs"
+            >
+              OK ({stats.perfect})
+            </Button>
+            <Button
+              variant={filterStatus === "no_gabarito" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setFilterStatus("no_gabarito")}
+              className="h-7 text-xs"
+            >
+              Sem gabarito ({stats.no_gabarito})
+            </Button>
+            <Button
+              variant={filterStatus === "incomplete" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setFilterStatus("incomplete")}
+              className="h-7 text-xs"
+            >
+              Incompletas ({stats.incomplete})
+            </Button>
+          </div>
+
+          {visibleQuestions.length === 0 ? (
             <div className="rounded-lg border border-border p-8 text-center text-sm text-muted-foreground">
-              Nenhuma questao encontrada neste pacote.
+              {questions.length === 0
+                ? "Nenhuma questao encontrada neste pacote."
+                : "Nenhuma questao corresponde ao filtro selecionado."}
             </div>
           ) : (
             <div className="space-y-3">
-              {questions.map((q) => (
+              {visibleQuestions.map((q) => (
                 <QuestionCard
                   key={q.id}
                   question={q}
                   onSave={handleSaveQuestion}
+                  onDelete={handleDeleteQuestion}
                 />
               ))}
             </div>
