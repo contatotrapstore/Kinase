@@ -343,12 +343,18 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
 
-    // Validate webhook secret if configured
+    // Validate webhook secret if configured.
+    // Z-API não aceita header customizado padrão, então também aceitamos
+    // o secret via query param ?secret=... (configurado na URL do webhook na Z-API).
     const webhookSecret = env.WHATSAPP_WEBHOOK_SECRET;
     if (webhookSecret) {
-      const headerSecret = request.headers.get('x-webhook-secret') ??
-                           request.headers.get('authorization')?.replace('Bearer ', '');
-      if (headerSecret !== webhookSecret) {
+      const url = new URL(request.url);
+      const provided =
+        request.headers.get('x-webhook-secret') ??
+        request.headers.get('authorization')?.replace('Bearer ', '') ??
+        url.searchParams.get('secret') ??
+        url.searchParams.get('token');
+      if (provided !== webhookSecret) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
       }
     }
