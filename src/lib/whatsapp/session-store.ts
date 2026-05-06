@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 
 export interface SessionData {
   userId: string;
@@ -20,7 +20,7 @@ export async function saveSession(
   pacoteId: string,
   data: SessionData
 ): Promise<void> {
-  const supabase = (await createClient()) as any;
+  const supabase = createServiceClient() as any;
 
   const { error } = await supabase.from("progresso_usuario").upsert(
     {
@@ -51,7 +51,7 @@ export async function saveSession(
 export async function loadSession(
   userId: string
 ): Promise<(SessionData & { pacoteId: string }) | null> {
-  const supabase = (await createClient()) as any;
+  const supabase = createServiceClient() as any;
 
   const { data, error } = await supabase
     .from("progresso_usuario")
@@ -90,7 +90,7 @@ export async function completeSession(
   userId: string,
   pacoteId: string
 ): Promise<void> {
-  const supabase = (await createClient()) as any;
+  const supabase = createServiceClient() as any;
 
   const { error } = await supabase
     .from("progresso_usuario")

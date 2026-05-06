@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { env } from "@/lib/env";
-import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import { EvolutionWhatsAppAdapter } from "@/lib/whatsapp/evolution";
 import { ZApiWhatsAppAdapter } from "@/lib/whatsapp/zapi";
 import type { WhatsAppAdapter, WhatsAppMessage } from "@/lib/whatsapp/adapter";
@@ -55,7 +55,7 @@ const sessions = new Map<string, UserSession>();
  * Finds a user by phone, or creates one if none exists.
  */
 async function getOrCreateUser(phone: string): Promise<DbUser> {
-  const supabase = await createClient() as any;
+  const supabase = createServiceClient() as any;
 
   // Try to find existing user
   const { data: existing, error: findError } = await supabase
@@ -97,7 +97,7 @@ async function getReadyPacoteQuestions(): Promise<{
   pacoteId: string;
   questions: Question[];
 } | null> {
-  const supabase = await createClient() as any;
+  const supabase = createServiceClient() as any;
 
   // Get first ready pacote
   const { data: pacote, error: pacoteError } = await supabase
@@ -149,7 +149,7 @@ async function getReadyPacoteQuestions(): Promise<{
  * Used to restore sessions from persistent storage.
  */
 async function getQuestionsForPacote(pacoteId: string): Promise<Question[]> {
-  const supabase = (await createClient()) as any;
+  const supabase = createServiceClient() as any;
 
   const { data: rows, error } = await supabase
     .from("questoes")
@@ -179,7 +179,7 @@ async function getQuestionsForPacote(pacoteId: string): Promise<Question[]> {
  * Fetches opcoes for a given question ID and maps to the Option type.
  */
 async function getOptions(questionId: string): Promise<Option[]> {
-  const supabase = await createClient() as any;
+  const supabase = createServiceClient() as any;
 
   const { data: rows, error } = await supabase
     .from("opcoes")
@@ -204,7 +204,7 @@ async function getOptions(questionId: string): Promise<Option[]> {
  * Fetches ranking entries from the rankings table joined with usuarios.
  */
 async function getRankingEntries(): Promise<Omit<RankingEntry, "position">[]> {
-  const supabase = await createClient() as any;
+  const supabase = createServiceClient() as any;
 
   const { data: rows, error } = await supabase
     .from("rankings")
@@ -235,7 +235,7 @@ async function saveAnswer(
   isCorrect: boolean,
   wasRetry: boolean
 ): Promise<void> {
-  const supabase = await createClient() as any;
+  const supabase = createServiceClient() as any;
 
   const { error } = await supabase.from("respostas").insert({
     usuario_id: userId,
@@ -261,7 +261,7 @@ async function upsertRanking(
   totalCorrect: number,
   totalAnswered: number
 ): Promise<void> {
-  const supabase = await createClient() as any;
+  const supabase = createServiceClient() as any;
   const accuracyPct =
     totalAnswered > 0
       ? Math.round((totalCorrect / totalAnswered) * 10000) / 100
