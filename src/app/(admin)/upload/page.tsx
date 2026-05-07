@@ -10,12 +10,29 @@ import { Label } from "@/components/ui/label";
 import { Upload, FileText, X, Loader2, ArrowLeft, CheckCircle2, ChevronDown, ChevronRight } from "lucide-react";
 
 const fallbackSubjects = [
-  "Anatomia",
-  "Fisiologia",
+  "Clínica Médica",
+  "Pediatria",
+  "Cirurgia Geral",
+  "Ginecologia e Obstetrícia",
+  "Medicina Preventiva",
+  "Cardiologia",
+  "Pneumologia",
+  "Neurologia",
+  "Endocrinologia",
+  "Infectologia",
+  "Nefrologia",
+  "Gastroenterologia",
+  "Hematologia",
+  "Reumatologia",
+  "Dermatologia",
+  "Geriatria",
+  "Psiquiatria",
+  "Ortopedia",
+  "Otorrinolaringologia",
+  "Oftalmologia",
+  "Urologia",
+  "Emergência",
   "Farmacologia",
-  "Patologia",
-  "Bioquímica",
-  "Microbiologia",
 ];
 
 interface ParsedQuestion {
@@ -45,7 +62,12 @@ export default function UploadPage() {
         .order("name");
 
       if (!error && data && data.length > 0) {
-        setSubjects(data.map((row: { name: string }) => row.name));
+        // Mescla DB com fallback (deduplica), mantendo as áreas digitadas pelo cliente
+        const dbNames = data.map((row: { name: string }) => row.name);
+        const merged = Array.from(new Set([...dbNames, ...fallbackSubjects])).sort(
+          (a, b) => a.localeCompare(b, "pt-BR"),
+        );
+        setSubjects(merged);
       }
     }
     fetchSubjects();
@@ -843,24 +865,27 @@ export default function UploadPage() {
               />
             </div>
 
-            {/* Subject select */}
+            {/* Subject combobox — admin pode escolher da lista OU digitar nova */}
             <div>
               <Label htmlFor="subject" className="mb-2 block">
                 Matéria
               </Label>
-              <select
+              <Input
                 id="subject"
+                list="subject-options"
+                placeholder="Selecione ou digite (ex: Clínica Médica)"
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
-                className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-              >
-                <option value="">Selecione uma matéria</option>
+                autoComplete="off"
+              />
+              <datalist id="subject-options">
                 {subjects.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
+                  <option key={s} value={s} />
                 ))}
-              </select>
+              </datalist>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Se a matéria não estiver na lista, digite o nome — será criada automaticamente
+              </p>
             </div>
 
             {/* Bank name */}
