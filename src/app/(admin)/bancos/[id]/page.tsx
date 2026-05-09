@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,6 +23,7 @@ import {
   Trash2,
   Plus,
   AlertTriangle,
+  Upload,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
@@ -375,6 +376,9 @@ export default function BankDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<"all" | QuestionStatus>("all");
+  const [importingGabarito, setImportingGabarito] = useState(false);
+  const [importResult, setImportResult] = useState<string | null>(null);
+  const gabaritoInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     async function fetchData() {
@@ -570,6 +574,59 @@ export default function BankDetailPage() {
     }
   }
 
+  async function handleImportGabarito(file: File) {
+    if (!bank) return;
+    setImportingGabarito(true);
+    setImportResult(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`/api/pacotes/${bank.id}/gabarito`, {
+        method: "POST",
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setImportResult(`Erro: ${data.error || "falha ao importar gabarito"}`);
+        return;
+      }
+      setImportResult(
+        `Importado! ${data.matched} questões correspondidas, ${data.updated} atualizadas (de ${data.parsed} no PDF).`,
+      );
+      // Recarregar questões pra refletir mudanças
+      const { data: questoes } = (await supabase
+        .from("questoes")
+        .select("*, opcoes(*)")
+        .eq("pacote_id", bank.id)
+        .order("question_order", { ascending: true })) as { data: any[] | null };
+      if (questoes) {
+        const mapped: Question[] = questoes.map((q: any) => ({
+          id: q.id,
+          number: q.question_order,
+          text: q.text,
+          imageUrl: q.image_url ?? null,
+          options: (q.opcoes ?? [])
+            .sort((a: any, b: any) => a.label.localeCompare(b.label))
+            .map((o: any) => ({
+              id: o.id,
+              letter: o.label,
+              text: o.text,
+              isCorrect: o.is_correct,
+            })),
+          explanation: q.explanation ?? "",
+        }));
+        setQuestions(mapped);
+      }
+    } catch (err) {
+      setImportResult(
+        `Erro: ${err instanceof Error ? err.message : "erro desconhecido"}`,
+      );
+    } finally {
+      setImportingGabarito(false);
+      if (gabaritoInputRef.current) gabaritoInputRef.current.value = "";
+    }
+  }
+
   const status = statusConfig[bank.status] ?? statusConfig.pending;
 
   // Contadores de status das questões
@@ -603,7 +660,44 @@ export default function BankDetailPage() {
           <Badge variant="outline" className={status.className}>
             {status.label}
           </Badge>
+          <div className="ml-auto">
+            <input
+              ref={gabaritoInputRef}
+              type="file"
+              accept=".pdf"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleImportGabarito(f);
+              }}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => gabaritoInputRef.current?.click()}
+              disabled={importingGabarito}
+              className="gap-2"
+            >
+              {importingGabarito ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Upload className="h-4 w-4" />
+              )}
+              {importingGabarito ? "Importando..." : "Importar Gabarito"}
+            </Button>
+          </div>
         </div>
+        {importResult && (
+          <div
+            className={`mt-2 rounded-md border px-3 py-2 text-sm ${
+              importResult.startsWith("Erro")
+                ? "border-red-200 bg-red-50 text-red-700"
+                : "border-emerald-200 bg-emerald-50 text-emerald-700"
+            }`}
+          >
+            {importResult}
+          </div>
+        )}
         <p className="mt-1 text-sm text-muted-foreground">
           {bank.materia} &middot; {questions.length} questoes
         </p>
