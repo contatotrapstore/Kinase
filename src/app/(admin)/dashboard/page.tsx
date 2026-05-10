@@ -22,6 +22,9 @@ import {
   Clock,
   Loader2,
   Inbox,
+  CheckCircle2,
+  AlertTriangle,
+  ExternalLink,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -109,6 +112,12 @@ export default function DashboardPage() {
   const [avgAccuracy, setAvgAccuracy] = useState<number | null>(null);
   const [ranking, setRanking] = useState<RankingEntry[]>([]);
   const [recentActivity, setRecentActivity] = useState<ActivityEntry[]>([]);
+  const [botStatus, setBotStatus] = useState<{
+    connected: boolean;
+    needsQrScan: boolean;
+    qrUrl: string | null;
+    paymentStatus: string | null;
+  } | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
@@ -159,6 +168,21 @@ export default function DashboardPage() {
     }
 
     fetchData();
+
+    // Status do bot WhatsApp (Z-API)
+    fetch("/api/whatsapp/status")
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data && typeof data.connected === "boolean") {
+          setBotStatus({
+            connected: data.connected,
+            needsQrScan: data.needsQrScan ?? false,
+            qrUrl: data.qrUrl ?? null,
+            paymentStatus: data.paymentStatus ?? null,
+          });
+        }
+      })
+      .catch((err) => console.error("Bot status fetch error:", err));
   }, []);
 
   /* ---- Stats config ---- */
@@ -210,6 +234,37 @@ export default function DashboardPage() {
           {error}
         </div>
       )}
+
+      {/* ---------- Bot WhatsApp Status ---------- */}
+      {botStatus && (
+        botStatus.connected ? (
+          <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            <span className="font-medium">Bot WhatsApp conectado</span>
+            <span className="text-emerald-600">— pronto para receber mensagens dos médicos</span>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-800">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span className="font-medium">Bot WhatsApp DESCONECTADO</span>
+            <span className="text-red-600">
+              — escaneie o QR Code novamente no painel da Z-API para reativar
+            </span>
+            {botStatus.qrUrl && (
+              <a
+                href={botStatus.qrUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-medium hover:bg-red-100"
+              >
+                Abrir Z-API
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            )}
+          </div>
+        )
+      )}
+
       {/* ---------- Stats grid ---------- */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {stats.map((stat) => (
