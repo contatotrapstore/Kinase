@@ -23,21 +23,24 @@ export class UnauthorizedError extends Error {
 export async function requireAdmin(): Promise<{ id: string; email: string }> {
   const supabase = await createClient();
 
-  // getSession() é determinístico: verifica se há cookie de sessão válido
-  // (não faz round-trip ao Supabase Auth como getUser faria)
-  const { data: { session }, error } = await supabase.auth.getSession();
+  // getUser faz validação contra Supabase Auth — mais seguro que getSession
+  // Sem cookies, retorna user=null + erro
+  const { data: { user }, error } = await supabase.auth.getUser();
 
-  if (error) {
-    throw new UnauthorizedError(error.message || "Erro ao validar sessão");
-  }
-  if (!session?.user) {
+  console.log("[requireAdmin]", {
+    hasUser: !!user,
+    userEmail: user?.email,
+    errorMsg: error?.message,
+  });
+
+  if (error || !user) {
     throw new UnauthorizedError(
-      "Sessão não encontrada — faça login no painel admin",
+      error?.message || "Sessão não encontrada — faça login no painel admin",
     );
   }
 
   return {
-    id: session.user.id,
-    email: session.user.email ?? "",
+    id: user.id,
+    email: user.email ?? "",
   };
 }
