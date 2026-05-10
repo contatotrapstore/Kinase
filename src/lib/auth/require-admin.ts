@@ -24,14 +24,8 @@ export async function requireAdmin(): Promise<{ id: string; email: string }> {
   const supabase = await createClient();
 
   // getUser faz validação contra Supabase Auth — mais seguro que getSession
-  // Sem cookies, retorna user=null + erro
+  // Sem cookies, retorna user=null + erro "Auth session missing!"
   const { data: { user }, error } = await supabase.auth.getUser();
-
-  console.log("[requireAdmin]", {
-    hasUser: !!user,
-    userEmail: user?.email,
-    errorMsg: error?.message,
-  });
 
   if (error || !user) {
     throw new UnauthorizedError(
