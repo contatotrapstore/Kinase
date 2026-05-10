@@ -27,10 +27,10 @@ export async function GET(request: NextRequest) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const supabase = createServiceClient() as any;
 
-    // Busca rankings com join em usuarios
+    // Busca rankings — NÃO retornar phone (LGPD), só nome (ou últimos 4 do phone)
     const { data, error } = await supabase
       .from("rankings")
-      .select("usuario_id, total_score, total_correct, total_answered, accuracy_pct, usuarios(name, phone)")
+      .select("usuario_id, total_score, total_correct, total_answered, accuracy_pct, usuarios(name)")
       .eq("pacote_id", pacoteId)
       .order("total_score", { ascending: false });
 
@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (row: any) => ({
         userId: row.usuario_id,
-        userName: row.usuarios?.name ?? row.usuarios?.phone?.slice(-4) ?? "Anônimo",
+        userName: row.usuarios?.name ?? "Anônimo",
         totalScore: row.total_score ?? 0,
         totalCorrect: row.total_correct ?? 0,
         totalAnswered: row.total_answered ?? 0,

@@ -389,8 +389,31 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Persistir TODA mensagem recebida em whatsapp_log (sucesso ou ignorada)
+    // Permite diagnosticar bugs como "bot não responde" investigando payloads reais
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const supabase = createServiceClient() as any;
+      await supabase.from("whatsapp_log").insert({
+        raw_payload: body,
+        parsed_phone: message?.from ?? null,
+        parsed_text: message?.text ?? null,
+        action: message && message.text ? "received" : "ignored_no_message",
+        details: !message || !message.text
+          ? "Payload não reconhecido pelo parser nem pelo fallback"
+          : null,
+      });
+    } catch (logErr) {
+      // Log persistence failure não pode quebrar o webhook
+      console.error("[webhook] Falha ao gravar whatsapp_log:", logErr);
+    }
+
     if (!message || !message.text) {
       // No actionable message (media-only, status update, etc.) — acknowledge silently
+      console.warn(
+        "[webhook] IGNORED — payload sem from/text reconhecível:",
+        JSON.stringify(body).slice(0, 500),
+      );
       return NextResponse.json({ success: true, action: "ignored" });
     }
 

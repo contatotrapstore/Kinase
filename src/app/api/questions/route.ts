@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireAdmin, UnauthorizedError } from "@/lib/auth/require-admin";
 
 /**
  * GET /api/questions?pacoteId=xxx
- * Retorna questões reais de um pacote (com opções e gabaritos) do Supabase.
+ * Retorna questões de um pacote.
+ *
+ * Sem auth: omite `is_correct` (gabarito) — proteção pública contra vazamento.
+ * Com auth admin: retorna `is_correct` para edição.
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -14,6 +18,15 @@ export async function GET(request: NextRequest) {
       { error: "pacoteId é obrigatório" },
       { status: 400 }
     );
+  }
+
+  // Detectar se chamada vem de admin autenticado
+  let isAdmin = false;
+  try {
+    await requireAdmin();
+    isAdmin = true;
+  } catch {
+    isAdmin = false;
   }
 
   try {
@@ -45,11 +58,16 @@ export async function GET(request: NextRequest) {
           .sort((a: any, b: any) => a.label.localeCompare(b.label))
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .map((o: any) => ({
+            id: isAdmin ? o.id : undefined,
             label: o.label,
             text: o.text,
-            isCorrect: o.is_correct,
+            // SÓ inclui is_correct se for chamada autenticada (admin)
+            ...(isAdmin ? { isCorrect: o.is_correct } : {}),
           })),
-        explanation: q.explanation_rewritten ?? q.explanation ?? "",
+        // Explicação só pra admin (pra evitar vazar resposta)
+        ...(isAdmin
+          ? { explanation: q.explanation_rewritten ?? q.explanation ?? "" }
+          : {}),
         imageUrl: q.image_url ?? null,
         hasImage: Boolean(q.image_url),
       })
@@ -74,6 +92,16 @@ export async function GET(request: NextRequest) {
  * Body: { id, text?, explanation?, options?: [{id, text?, isCorrect?}] }
  */
 export async function PATCH(request: NextRequest) {
+  // PATCH é destrutivo — exige admin autenticado
+  try {
+    await requireAdmin();
+  } catch (err) {
+    if (err instanceof UnauthorizedError) {
+      return NextResponse.json({ error: err.message }, { status: 401 });
+    }
+    throw err;
+  }
+
   try {
     const body = await request.json();
     const { id, text, explanation, options } = body;

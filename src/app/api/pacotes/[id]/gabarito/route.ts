@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { parsePdfText } from "@/lib/pdf/parser";
+import { requireAdmin, UnauthorizedError } from "@/lib/auth/require-admin";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+const MAX_PDF_SIZE = 10 * 1024 * 1024; // 10MB
 
 /**
  * POST /api/pacotes/[id]/gabarito
@@ -18,6 +21,16 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // Endpoint destrutivo (modifica gabarito) — exige admin
+  try {
+    await requireAdmin();
+  } catch (err) {
+    if (err instanceof UnauthorizedError) {
+      return NextResponse.json({ error: err.message }, { status: 401 });
+    }
+    throw err;
+  }
+
   try {
     const { id: pacoteId } = await params;
     if (!pacoteId) {
@@ -42,6 +55,13 @@ export async function POST(
       return NextResponse.json(
         { error: "Envie um PDF (.pdf) no campo 'file'" },
         { status: 400 },
+      );
+    }
+
+    if (file.size > MAX_PDF_SIZE) {
+      return NextResponse.json(
+        { error: `PDF acima de ${MAX_PDF_SIZE / 1024 / 1024}MB` },
+        { status: 413 },
       );
     }
 
@@ -140,23 +160,35 @@ export async function POST(
         .map((o) => o.id);
 
       if (otherIds.length > 0) {
-        await supabase
+        const { error: clearErr } = await supabase
           .from("opcoes")
           .update({ is_correct: false })
           .in("id", otherIds);
+        if (clearErr) {
+          console.error("[gabarito] erro ao limpar outras opções:", clearErr);
+          continue; // pula essa questão sem incrementar updated
+        }
       }
 
-      await supabase
+      const { error: markErr } = await supabase
         .from("opcoes")
         .update({ is_correct: true })
         .eq("id", targetOpt.id);
+      if (markErr) {
+        console.error("[gabarito] erro ao marcar correta:", markErr);
+        continue;
+      }
 
       // Atualizar explicação se houver
       if (parsedQ.explanation && parsedQ.explanation.length > 10) {
-        await supabase
+        const { error: explErr } = await supabase
           .from("questoes")
           .update({ explanation: parsedQ.explanation })
           .eq("id", questao.id);
+        if (explErr) {
+          console.error("[gabarito] erro ao salvar explicação (não-fatal):", explErr);
+          // Continua: gabarito já foi marcado, explicação é bonus
+        }
       }
 
       updated++;
