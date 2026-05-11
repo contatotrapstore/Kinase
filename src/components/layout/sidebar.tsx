@@ -11,7 +11,6 @@ import {
   Trophy,
   Menu,
   ClipboardList,
-  MessageCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -30,7 +29,6 @@ const navItems = [
   { href: "/alunos", label: "Usuários", icon: Users },
   { href: "/ranking", label: "Ranking", icon: Trophy },
   { href: "/pesquisas", label: "Pesquisas", icon: ClipboardList },
-  { href: "/whatsapp", label: "WhatsApp", icon: MessageCircle },
 ];
 
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
