@@ -573,8 +573,10 @@ async function handleRanking(
     return;
   }
 
+  // Identifica o solicitante pra destacar "👈 você" na própria linha
+  const user = await getOrCreateUser(phone);
   const ranked = buildRanking(entries);
-  const formatted = formatRankingMessage(ranked, 10);
+  const formatted = formatRankingMessage(ranked, 10, user.id);
   await adapter.sendText(phone, rankingMessage(formatted));
 }
 

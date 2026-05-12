@@ -103,10 +103,12 @@ export function buildComparativeRanking(
  * Formata o ranking para exibição no WhatsApp (texto simples com emojis).
  * @param ranking Lista já ordenada com posições
  * @param topN Quantidade de usuários a exibir (padrão: todos)
+ * @param currentUserId Se fornecido, marca a linha do próprio usuário com "👈 você"
  */
 export function formatRankingMessage(
   ranking: RankingEntry[],
   topN?: number,
+  currentUserId?: string,
 ): string {
   const entries = topN ? ranking.slice(0, topN) : ranking;
 
@@ -124,12 +126,23 @@ export function formatRankingMessage(
     const medal = medalhas[entry.position] ?? `${entry.position}º`;
     const name = entry.userName ? `Dr. ${entry.userName}` : 'Dr.';
     const accuracy = entry.accuracyPct.toFixed(1);
+    const isYou = currentUserId && entry.userId === currentUserId;
+    const youMarker = isYou ? '  👈 *você*' : '';
 
-    return `${medal} *${name}* — ${entry.totalScore} pts (${accuracy}% acerto)`;
+    return `${medal} *${name}* — ${entry.totalScore} pts (${accuracy}% acerto)${youMarker}`;
   });
 
   const header = '📊 *Ranking Kinase*\n';
   const separator = '─'.repeat(24);
 
-  return `${header}${separator}\n${lines.join('\n')}`;
+  // Se o usuário não estiver no top N, adiciona linha extra ao final
+  const userInTop = currentUserId && entries.some((e) => e.userId === currentUserId);
+  const userOutside = currentUserId && !userInTop
+    ? ranking.find((e) => e.userId === currentUserId)
+    : null;
+  const youBelow = userOutside
+    ? `\n…\n${userOutside.position}º *Dr. ${userOutside.userName ?? ''}* — ${userOutside.totalScore} pts (${userOutside.accuracyPct.toFixed(1)}% acerto)  👈 *você*`
+    : '';
+
+  return `${header}${separator}\n${lines.join('\n')}${youBelow}`;
 }

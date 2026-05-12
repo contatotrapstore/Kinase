@@ -96,9 +96,8 @@ export function feedbackMessage(
   const hasExplanation = explanation && explanation.trim().length > 0;
   if (hasExplanation) {
     lines.push(explanation);
-  } else if (!isCorrect) {
-    lines.push('_Comentário desta questão não disponível._');
   }
+  // Sem fallback negativo: se não tem comentário, simplesmente omite a linha
 
   if (!isCorrect) {
     lines.push('');
