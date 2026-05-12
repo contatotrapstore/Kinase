@@ -89,9 +89,10 @@ async function getOrCreateUser(phone: string): Promise<DbUser> {
 }
 
 /**
- * Fetches the first available pacote with status='ready' and returns
- * its questions ordered by question_order.
- * Returns { pacoteId, questions } or null if no ready pacote exists.
+ * Fetches the pacote with the most answerable questions (i.e. questions
+ * with a marked gabarito) and returns those questions ordered by question_order.
+ * Filters out questions without is_correct=true option (would always fail).
+ * Returns { pacoteId, questions } or null if no answerable questions exist.
  */
 async function getReadyPacoteQuestions(): Promise<{
   pacoteId: string;
@@ -99,37 +100,39 @@ async function getReadyPacoteQuestions(): Promise<{
 } | null> {
   const supabase = createServiceClient() as any;
 
-  // Get first ready pacote
-  const { data: pacote, error: pacoteError } = await supabase
-    .from("pacotes")
-    .select("id")
-    .eq("status", "ready")
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+  // Inner join garante: só questões com pelo menos 1 opcao is_correct=true
+  const { data: rows, error } = await supabase
+    .from("questoes")
+    .select(
+      "id, pacote_id, question_order, text, image_url, explanation, created_at, opcoes!inner(id), pacotes!inner(status)"
+    )
+    .eq("opcoes.is_correct", true)
+    .eq("pacotes.status", "ready")
+    .order("question_order", { ascending: true });
 
-  if (pacoteError) {
-    console.error("[webhook] Erro ao buscar pacote:", pacoteError);
-    throw pacoteError;
+  if (error) {
+    console.error("[webhook] Erro ao buscar questões respondíveis:", error);
+    throw error;
   }
 
-  if (!pacote) {
+  if (!rows || rows.length === 0) {
     return null;
   }
 
-  // Fetch questions for this pacote
-  const { data: rows, error: qError } = await supabase
-    .from("questoes")
-    .select("id, pacote_id, question_order, text, image_url, explanation, created_at")
-    .eq("pacote_id", pacote.id)
-    .order("question_order", { ascending: true });
-
-  if (qError) {
-    console.error("[webhook] Erro ao buscar questões:", qError);
-    throw qError;
+  // Agrupar por pacote, escolher o que tem mais questões respondíveis
+  const byPacote: Record<string, any[]> = {};
+  for (const r of rows as any[]) {
+    if (!byPacote[r.pacote_id]) byPacote[r.pacote_id] = [];
+    byPacote[r.pacote_id].push(r);
   }
 
-  const questions: Question[] = (rows ?? []).map((r: any) => ({
+  const bestPacoteId = Object.entries(byPacote).sort(
+    (a, b) => b[1].length - a[1].length,
+  )[0]?.[0];
+
+  if (!bestPacoteId) return null;
+
+  const questions: Question[] = byPacote[bestPacoteId].map((r: any) => ({
     id: r.id,
     bankId: r.pacote_id,
     questionOrder: r.question_order,
@@ -141,11 +144,11 @@ async function getReadyPacoteQuestions(): Promise<{
     createdAt: r.created_at,
   }));
 
-  return { pacoteId: pacote.id, questions };
+  return { pacoteId: bestPacoteId, questions };
 }
 
 /**
- * Fetches questions for a specific pacote by ID.
+ * Fetches answerable questions (com gabarito) for a specific pacote by ID.
  * Used to restore sessions from persistent storage.
  */
 async function getQuestionsForPacote(pacoteId: string): Promise<Question[]> {
@@ -153,8 +156,11 @@ async function getQuestionsForPacote(pacoteId: string): Promise<Question[]> {
 
   const { data: rows, error } = await supabase
     .from("questoes")
-    .select("id, pacote_id, question_order, text, image_url, explanation, created_at")
+    .select(
+      "id, pacote_id, question_order, text, image_url, explanation, created_at, opcoes!inner(id)"
+    )
     .eq("pacote_id", pacoteId)
+    .eq("opcoes.is_correct", true)
     .order("question_order", { ascending: true });
 
   if (error) {
