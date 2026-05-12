@@ -77,22 +77,35 @@ export function questionMessage(
  * Formata a mensagem de feedback após o usuário responder uma questão.
  * @param isCorrect - Se a resposta estava correta
  * @param explanation - Explicação da resposta correta
+ * @param correctOption - Alternativa correta (mostrada quando o usuário erra)
  */
-export function feedbackMessage(isCorrect: boolean, explanation: string): string {
-  const header = isCorrect
-    ? 'Acertou! ✅'
-    : 'Errou! ❌';
+export function feedbackMessage(
+  isCorrect: boolean,
+  explanation: string,
+  correctOption?: { label: string; text: string } | null,
+): string {
+  const header = isCorrect ? 'Acertou! ✅' : 'Errou! ❌';
+  const lines: string[] = [`*${header}*`, ''];
 
-  const retryNote = isCorrect
-    ? ''
-    : '\n_Esta questão voltará para revisão._';
+  // Quando erra, sempre mostrar qual era a correta — sem isso o usuário não aprende
+  if (!isCorrect && correctOption) {
+    lines.push(`*Resposta correta:* *${correctOption.label})* ${correctOption.text}`);
+    lines.push('');
+  }
 
-  return [
-    `*${header}*`,
-    '',
-    explanation || 'Sem explicação disponível.',
-    retryNote,
-  ].filter(Boolean).join('\n');
+  const hasExplanation = explanation && explanation.trim().length > 0;
+  if (hasExplanation) {
+    lines.push(explanation);
+  } else if (!isCorrect) {
+    lines.push('_Comentário desta questão não disponível._');
+  }
+
+  if (!isCorrect) {
+    lines.push('');
+    lines.push('_Esta questão voltará para revisão._');
+  }
+
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 /**

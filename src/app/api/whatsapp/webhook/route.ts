@@ -755,8 +755,17 @@ async function handleAnswer(
     totalAnswered: session.totalAnswered,
   });
 
-  // Send feedback
-  await adapter.sendText(phone, feedbackMessage(result.isCorrect, explanation));
+  // Send feedback (incluindo a opção correta quando errou — sem isso o usuário não aprende)
+  await adapter.sendText(
+    phone,
+    feedbackMessage(
+      result.isCorrect,
+      explanation,
+      result.correctOption
+        ? { label: result.correctOption.label, text: result.correctOption.text }
+        : null,
+    ),
+  );
 
   // Determine next step
   if (result.blockCompleted) {
