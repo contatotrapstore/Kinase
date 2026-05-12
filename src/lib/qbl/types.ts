@@ -57,9 +57,10 @@ export interface QBLState {
 /** Resultado do processamento de uma resposta */
 export interface AnswerResult {
   isCorrect: boolean;
-  correctOption: Option;
+  correctOption: Option | null;  // null quando questão não tem gabarito marcado
   explanation: string;           // Explicação reescrita (ou original como fallback)
   shouldRetry: boolean;          // Questão voltará na fila de revisão
   blockCompleted: boolean;       // Bloco atual foi finalizado
   advancedToNextBlock: boolean;  // Usuário avançou para o próximo bloco
+  skippedNoGabarito?: boolean;   // True quando questão sem opção correta foi pulada
 }

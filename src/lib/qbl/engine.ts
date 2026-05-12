@@ -70,8 +70,31 @@ export function processAnswer(
 ): { result: AnswerResult; newState: QBLState } {
   // Encontra a alternativa correta
   const correctOption = options.find((o) => o.isCorrect);
+
+  // Defesa: questão sem gabarito marcado não pode ser pontuada — pulamos sem quebrar fluxo
   if (!correctOption) {
-    throw new Error(`Nenhuma alternativa correta encontrada para a questão ${questionId}`);
+    const skippedState: QBLState = {
+      ...state,
+      currentBlock: { ...state.currentBlock },
+      questionsInBlock: [...state.questionsInBlock],
+      retryQueue: [...state.retryQueue],
+      currentIndex: state.currentIndex + 1,
+    };
+    const skippedBlockCompleted =
+      skippedState.currentIndex >= skippedState.questionsInBlock.length &&
+      skippedState.retryQueue.length === 0;
+    return {
+      result: {
+        isCorrect: false,
+        correctOption: null,
+        explanation: '',
+        shouldRetry: false,
+        blockCompleted: skippedBlockCompleted,
+        advancedToNextBlock: false,
+        skippedNoGabarito: true,
+      },
+      newState: skippedState,
+    };
   }
 
   const isCorrect = selectedOptionId === correctOption.id;

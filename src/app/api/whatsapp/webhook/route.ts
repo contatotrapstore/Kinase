@@ -346,6 +346,9 @@ function createWhatsAppAdapter(): WhatsAppAdapter {
  * 5. Send the response back to the user via the adapter
  */
 export async function POST(request: NextRequest) {
+  // Declarados fora do try pra que o catch global possa avisar o usuário
+  let adapterForCatch: WhatsAppAdapter | null = null;
+  let phoneForCatch: string | null = null;
   try {
     const body = await request.json();
 
@@ -372,6 +375,7 @@ export async function POST(request: NextRequest) {
 
     // --- 1. Create adapter and parse the incoming message ---
     const adapter = createWhatsAppAdapter();
+    adapterForCatch = adapter;
     let message: WhatsAppMessage | null = adapter.parseWebhook(body);
 
     // Fallback: accept generic test format { phone, text } or { from, body }
@@ -424,6 +428,7 @@ export async function POST(request: NextRequest) {
     }
 
     const phone = message.from;
+    phoneForCatch = phone;
     const text = message.text.trim();
 
     console.log(`[webhook] Mensagem de ${phone}: "${text}"`);
@@ -477,6 +482,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("[webhook] Erro ao processar webhook:", error);
+    // Best-effort: avisar usuário antes de retornar 500 (Z-API consumiria silenciosamente)
+    if (adapterForCatch && phoneForCatch) {
+      try {
+        await adapterForCatch.sendText(
+          phoneForCatch,
+          "Tive um erro processando sua mensagem. Envie */start* para recomeçar."
+        );
+      } catch (sendErr) {
+        console.error("[webhook] Falha ao avisar usuário do erro:", sendErr);
+      }
+    }
     return NextResponse.json(
       { error: "Erro ao processar webhook" },
       { status: 500 }
@@ -660,6 +676,39 @@ async function handleAnswer(
     selectedOption.id,
     options
   );
+
+  // Defesa: questão sem gabarito marcado — pula sem pontuar, avisa usuário
+  if (result.skippedNoGabarito) {
+    console.warn(
+      `[webhook] Questão ${currentQuestionId} sem gabarito — pulando`
+    );
+    session.state = newState;
+    await saveSession(session.user.id, session.pacoteId, {
+      userId: session.user.id,
+      pacoteId: session.pacoteId,
+      currentBlock: session.state.currentBlock.blockNumber,
+      currentQuestionIndex: session.state.currentIndex,
+      score: session.score,
+      errorsInBlock: session.state.errorsInBlock,
+      retryQueue: session.state.retryQueue ?? [],
+      totalCorrect: session.totalCorrect,
+      totalAnswered: session.totalAnswered,
+    });
+    await adapter.sendText(
+      phone,
+      "Essa questão está com o gabarito pendente de revisão — pulei para a próxima."
+    );
+    if (result.blockCompleted) {
+      await completeSession(session.user.id, session.pacoteId);
+      await adapter.sendText(
+        phone,
+        "Bloco finalizado! Envie */start* para recomeçar ou */ranking* para ver o ranking."
+      );
+    } else {
+      await sendCurrentQuestion(adapter, phone, session);
+    }
+    return;
+  }
 
   // Retrieve the explanation from the cached question data
   const questionData = session.questions.find((q) => q.id === currentQuestionId);
