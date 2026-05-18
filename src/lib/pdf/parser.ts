@@ -133,9 +133,11 @@ const OPTION_LINE_RE = /(?:^|\n|[.?!;]\s*|\s{2,})\(?\s*([A-Ea-e])\s*[)\].:\-–�
 const COMENTARIO_RE = /\n\s*COMENT[AÁ]RIO\s*:\s*/i;
 
 /**
- * Regex para gabarito inline
+ * Regex para gabarito inline.
+ * EXIGE: início de linha + ":" obrigatório + boundary após a letra.
+ * Sem isso, captura falsos positivos do tipo "Resposta aos antibióticos" → A.
  */
-const GABARITO_RE = /(?:Gabarito|Resposta)\s*:?\s*([A-Ea-e])/i;
+const GABARITO_RE = /(?:^|\n)\s*(?:Gabarito|Resposta)\s*:\s*(?:letra\s+)?([A-Da-d])\b/i;
 
 /**
  * Referência entre parênteses no início da questão, ex:
@@ -163,8 +165,9 @@ const GABARITO_HEADER_RE =
 
 /**
  * Regex para "Resposta: letra X" no final do comentário.
+ * EXIGE ":" obrigatório + boundary pra não capturar "Resposta aos..." → A.
  */
-const RESPOSTA_LETRA_RE = /Resposta:?\s*(?:letra\s+)?([A-Ea-e])/i;
+const RESPOSTA_LETRA_RE = /(?:^|\n|[.!?]\s+)Resposta\s*:\s*(?:letra\s+)?([A-Da-d])\b/i;
 
 /**
  * Regex para alternativas inline no formato gabarito:
