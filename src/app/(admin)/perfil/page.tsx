@@ -11,7 +11,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { User, Lock, Mail, Calendar } from "lucide-react";
+import { User, Lock, Mail, Calendar, Users, Plus, Loader2 } from "lucide-react";
 
 export default function PerfilPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -28,6 +28,74 @@ export default function PerfilPage() {
     type: "success" | "error";
     text: string;
   } | null>(null);
+
+  type AdminEntry = {
+    id: string;
+    email: string;
+    name: string | null;
+    created_at: string;
+    last_sign_in_at: string | null;
+  };
+  const [admins, setAdmins] = useState<AdminEntry[]>([]);
+  const [loadingAdmins, setLoadingAdmins] = useState(true);
+  const [newEmail, setNewEmail] = useState("");
+  const [newAdminPassword, setNewAdminPassword] = useState("");
+  const [newName, setNewName] = useState("");
+  const [creatingAdmin, setCreatingAdmin] = useState(false);
+  const [adminMessage, setAdminMessage] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+
+  async function refreshAdmins() {
+    setLoadingAdmins(true);
+    try {
+      const res = await fetch("/api/admins");
+      if (res.ok) {
+        const json = await res.json();
+        setAdmins(json.admins ?? []);
+      }
+    } catch {
+      // silent
+    } finally {
+      setLoadingAdmins(false);
+    }
+  }
+
+  useEffect(() => {
+    refreshAdmins();
+  }, []);
+
+  async function handleCreateAdmin(e: React.FormEvent) {
+    e.preventDefault();
+    setAdminMessage(null);
+    if (newAdminPassword.length < 6) {
+      setAdminMessage({ type: "error", text: "Senha precisa ter pelo menos 6 caracteres." });
+      return;
+    }
+    setCreatingAdmin(true);
+    try {
+      const res = await fetch("/api/admins", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: newEmail, password: newAdminPassword, name: newName || undefined }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setAdminMessage({ type: "error", text: json.error ?? "Erro ao criar administrador" });
+      } else {
+        setAdminMessage({ type: "success", text: `Administrador ${newEmail} criado!` });
+        setNewEmail("");
+        setNewAdminPassword("");
+        setNewName("");
+        refreshAdmins();
+      }
+    } catch (err) {
+      setAdminMessage({ type: "error", text: err instanceof Error ? err.message : "Erro de rede" });
+    } finally {
+      setCreatingAdmin(false);
+    }
+  }
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -194,6 +262,92 @@ export default function PerfilPage() {
 
             <Button type="submit" disabled={changingPassword}>
               {changingPassword ? "Alterando..." : "Alterar Senha"}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      {/* Manage other admins */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Users className="h-5 w-5" />
+            Outros Administradores
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Lista atual */}
+          <div className="space-y-2">
+            <Label className="text-muted-foreground">Administradores ativos</Label>
+            {loadingAdmins ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Carregando...
+              </div>
+            ) : admins.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nenhum administrador cadastrado.</p>
+            ) : (
+              <ul className="divide-y rounded-md border">
+                {admins.map((a) => (
+                  <li key={a.id} className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-sm font-medium">{a.name ?? a.email}</p>
+                      <p className="text-xs text-muted-foreground">{a.email}</p>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {a.last_sign_in_at
+                        ? `Último acesso: ${new Date(a.last_sign_in_at).toLocaleDateString("pt-BR")}`
+                        : "Nunca acessou"}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {/* Form criar */}
+          <form onSubmit={handleCreateAdmin} className="space-y-4 max-w-md border-t pt-6">
+            <div className="space-y-2">
+              <Label htmlFor="new-admin-name">Nome (opcional)</Label>
+              <Input
+                id="new-admin-name"
+                placeholder="Ex: Dr. Eduardo"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new-admin-email">E-mail</Label>
+              <Input
+                id="new-admin-email"
+                type="email"
+                placeholder="email@dominio.com"
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new-admin-password">Senha inicial</Label>
+              <Input
+                id="new-admin-password"
+                type="password"
+                placeholder="Mínimo 6 caracteres (passe pro novo admin)"
+                value={newAdminPassword}
+                onChange={(e) => setNewAdminPassword(e.target.value)}
+                required
+                minLength={6}
+              />
+            </div>
+
+            {adminMessage && (
+              <p className={`text-sm ${adminMessage.type === "success" ? "text-green-600" : "text-destructive"}`}>
+                {adminMessage.text}
+              </p>
+            )}
+
+            <Button type="submit" disabled={creatingAdmin} className="gap-2">
+              {creatingAdmin ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+              {creatingAdmin ? "Criando..." : "Adicionar Administrador"}
             </Button>
           </form>
         </CardContent>
