@@ -190,7 +190,8 @@ async function getOptions(questionId: string): Promise<Option[]> {
   const { data: rows, error } = await supabase
     .from("opcoes")
     .select("id, questao_id, label, text, is_correct")
-    .eq("questao_id", questionId);
+    .eq("questao_id", questionId)
+    .order("label", { ascending: true });
 
   if (error) {
     console.error("[webhook] Erro ao buscar opções:", error);
