@@ -130,6 +130,7 @@ export function processAnswer(
       newState.questionsInBlock = [...newState.retryQueue];
       newState.retryQueue = [];
       newState.currentIndex = 0;
+      newState.inRetryMode = true;
     } else {
       // Bloco finalizado sem pendências
       blockCompleted = true;

@@ -52,6 +52,7 @@ export interface QBLState {
   currentIndex: number;          // Índice da questão atual dentro do bloco
   errorsInBlock: number;         // Erros acumulados no bloco
   retryQueue: string[];          // IDs das questões erradas para revisão
+  inRetryMode?: boolean;         // True quando questionsInBlock foi recarregado da retryQueue (questões erradas voltando)
 }
 
 /** Resultado do processamento de uma resposta */

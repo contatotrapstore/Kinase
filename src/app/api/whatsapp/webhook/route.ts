@@ -972,6 +972,14 @@ async function sendCurrentQuestion(
     await adapter.sendImage(phone, questionData.imageUrl, `Questão ${displayNumber}`);
   }
 
+  // Header de revisão quando a questão veio da retry queue (questões que ele errou)
+  if (state.inRetryMode) {
+    await adapter.sendText(
+      phone,
+      "📚 *Revisão* — Esta é uma questão que você errou antes. Responda novamente:",
+    );
+  }
+
   await adapter.sendText(
     phone,
     questionMessage(displayNumber, questionData.text, optionLabels)
