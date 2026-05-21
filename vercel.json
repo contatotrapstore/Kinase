@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/keep-alive",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/motivacional",
+      "schedule": "0 14 * * *"
     }
   ],
   "headers": [

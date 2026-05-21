@@ -23,6 +23,7 @@ export function welcomeMessage(): string {
     '*Comandos disponíveis:*',
     '/ranking — Ver ranking comparativo',
     '/progresso — Ver seu progresso atual',
+    '/restart — Zerar seu progresso e recomeçar',
     '/ajuda — Ver esta lista de comandos',
     '',
     'Vamos começar! Sua primeira questão está a caminho.',
@@ -36,7 +37,8 @@ export function helpMessage(): string {
   return [
     '*Comandos disponíveis:* 📋',
     '',
-    '/start ou /iniciar — Iniciar ou reiniciar',
+    '/start ou /iniciar — Continuar de onde parou',
+    '/restart ou /reiniciar — Zerar e começar do início',
     '/ranking — Ver ranking comparativo',
     '/progresso — Ver seu progresso atual',
     '/ajuda ou /help — Ver esta mensagem',

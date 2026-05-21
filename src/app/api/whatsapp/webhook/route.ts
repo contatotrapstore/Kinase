@@ -182,6 +182,65 @@ async function getQuestionsForPacote(pacoteId: string): Promise<Question[]> {
 }
 
 /**
+ * Busca o próximo pacote respondível pro usuário,
+ * pulando pacotes que ele já completou. Usado quando o usuário esgota
+ * todas as questões respondíveis do pacote atual e queremos avançar
+ * pra um novo pacote em vez de repetir.
+ */
+async function getNextReadyPacote(userId: string): Promise<{
+  pacoteId: string;
+  name: string;
+  questions: Question[];
+} | null> {
+  const supabase = createServiceClient() as any;
+
+  // IDs de pacotes que o usuário já completou (não repetir)
+  const { data: completed } = await supabase
+    .from("progresso_usuario")
+    .select("pacote_id")
+    .eq("usuario_id", userId)
+    .eq("status", "completed");
+  const completedIds = new Set((completed ?? []).map((p: any) => p.pacote_id));
+
+  // Mesma lógica do getReadyPacoteQuestions, mas pulando os completados
+  const { data: rows, error } = await supabase
+    .from("questoes")
+    .select(
+      "id, pacote_id, question_order, text, image_url, explanation, created_at, opcoes!inner(id), pacotes!inner(status, name)"
+    )
+    .eq("opcoes.is_correct", true)
+    .eq("pacotes.status", "ready")
+    .order("question_order", { ascending: true });
+
+  if (error || !rows || rows.length === 0) return null;
+
+  const byPacote: Record<string, { name: string; rows: any[] }> = {};
+  for (const r of rows as any[]) {
+    if (completedIds.has(r.pacote_id)) continue;
+    if (!byPacote[r.pacote_id]) byPacote[r.pacote_id] = { name: r.pacotes?.name ?? "", rows: [] };
+    byPacote[r.pacote_id].rows.push(r);
+  }
+
+  const best = Object.entries(byPacote).sort((a, b) => b[1].rows.length - a[1].rows.length)[0];
+  if (!best) return null;
+
+  const [bestPacoteId, { name, rows: pacoteRows }] = best;
+  const questions: Question[] = pacoteRows.map((r: any) => ({
+    id: r.id,
+    bankId: r.pacote_id,
+    questionOrder: r.question_order,
+    text: r.text,
+    imageUrl: r.image_url ?? null,
+    type: "multiple_choice" as const,
+    explanationOriginal: r.explanation ?? null,
+    explanationRewritten: null,
+    createdAt: r.created_at,
+  }));
+
+  return { pacoteId: bestPacoteId, name, questions };
+}
+
+/**
  * Fetches opcoes for a given question ID and maps to the Option type.
  */
 async function getOptions(questionId: string): Promise<Option[]> {
@@ -465,6 +524,8 @@ export async function POST(request: NextRequest) {
 
     if (command === "/start" || command === "/iniciar") {
       await handleStart(adapter, phone);
+    } else if (command === "/restart" || command === "/reiniciar") {
+      await handleRestart(adapter, phone);
     } else if (command === "/ranking") {
       await handleRanking(adapter, phone);
     } else if (command === "/progresso") {
@@ -507,14 +568,46 @@ export async function POST(request: NextRequest) {
 
 /**
  * Handles /start and /iniciar commands.
- * Creates (or resets) the user session, initializes the first QBL block,
- * and sends the welcome message followed by the first question.
+ * Se já há progresso ativo, RETOMA de onde parou (sem zerar score).
+ * Se não, inicia bloco 1 com o pacote escolhido pelo engine.
+ * Use /restart pra forçar reset.
  */
 async function handleStart(
   adapter: WhatsAppAdapter,
   phone: string
 ): Promise<void> {
   const user = await getOrCreateUser(phone);
+
+  // Retomar sessão se houver progresso ativo
+  const existing = await loadSession(user.id);
+  if (existing) {
+    const questions = await getQuestionsForPacote(existing.pacoteId);
+    if (questions.length > 0) {
+      const state = initializeBlock(questions, existing.currentBlock);
+      state.currentIndex = Math.min(existing.currentQuestionIndex, state.questionsInBlock.length - 1);
+      state.errorsInBlock = existing.errorsInBlock;
+      state.retryQueue = existing.retryQueue ?? [];
+
+      const session: UserSession = {
+        user,
+        pacoteId: existing.pacoteId,
+        state,
+        score: existing.score,
+        totalCorrect: existing.totalCorrect,
+        totalAnswered: existing.totalAnswered,
+        questions,
+      };
+      sessions.set(phone, session);
+      await adapter.sendText(
+        phone,
+        `*Bem-vindo de volta!* 👋\n\nVocê está no bloco ${existing.currentBlock}, questão ${state.currentIndex + 1}.\nScore atual: *${existing.score} pts* — ${existing.totalCorrect}/${existing.totalAnswered} acertos.\n\nEnvie */restart* se quiser zerar e começar do início.`
+      );
+      await sendCurrentQuestion(adapter, phone, session);
+      return;
+    }
+  }
+
+  // Sem progresso ativo → criar sessão nova com bloco 1
   const pacoteData = await getReadyPacoteQuestions();
 
   if (!pacoteData || pacoteData.questions.length === 0) {
@@ -554,6 +647,26 @@ async function handleStart(
 
   await adapter.sendText(phone, welcomeMessage());
   await sendCurrentQuestion(adapter, phone, session);
+}
+
+/**
+ * Handles /restart and /reiniciar commands.
+ * Zera progresso (in_progress e completed do user) e inicia sessão limpa.
+ */
+async function handleRestart(
+  adapter: WhatsAppAdapter,
+  phone: string,
+): Promise<void> {
+  const user = await getOrCreateUser(phone);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const supabase = createServiceClient() as any;
+  await supabase
+    .from("progresso_usuario")
+    .delete()
+    .eq("usuario_id", user.id);
+  sessions.delete(phone);
+  await adapter.sendText(phone, "*Progresso zerado.* Iniciando do começo...");
+  await handleStart(adapter, phone);
 }
 
 /**
@@ -782,11 +895,36 @@ async function handleAnswer(
       );
       await sendCurrentQuestion(adapter, phone, session);
     } else {
+      // Completou todos os blocos do pacote atual — tenta avançar pro próximo
       await completeSession(session.user.id, session.pacoteId);
-      await adapter.sendText(
-        phone,
-        "*Parabéns!* Você completou todos os blocos disponíveis! 🎉\n\nEnvie */ranking* para ver sua posição."
-      );
+      const nextPacote = await getNextReadyPacote(session.user.id);
+      if (nextPacote) {
+        const newState = initializeBlock(nextPacote.questions, 1);
+        session.pacoteId = nextPacote.pacoteId;
+        session.state = newState;
+        session.questions = nextPacote.questions;
+        await saveSession(session.user.id, session.pacoteId, {
+          userId: session.user.id,
+          pacoteId: session.pacoteId,
+          currentBlock: newState.currentBlock.blockNumber,
+          currentQuestionIndex: 0,
+          score: session.score,
+          errorsInBlock: 0,
+          retryQueue: [],
+          totalCorrect: session.totalCorrect,
+          totalAnswered: session.totalAnswered,
+        });
+        await adapter.sendText(
+          phone,
+          `*Parabéns!* Você completou o pacote anterior. 🎉\n\nIniciando novo pacote: *${nextPacote.name}*`,
+        );
+        await sendCurrentQuestion(adapter, phone, session);
+      } else {
+        await adapter.sendText(
+          phone,
+          "*Parabéns!* Você completou TODAS as questões disponíveis! 🏆\n\nEnvie */ranking* para ver sua posição."
+        );
+      }
     }
   } else {
     // Send next question (could be a retry question)
