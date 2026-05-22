@@ -12,47 +12,57 @@ import type {
 } from './types';
 
 /**
- * Tamanhos progressivos dos blocos: bloco 1 = 10, bloco 2 = 20, bloco 3 = 30
- * Pacotes maiores são extensões dos menores (o de 20 contém as 10 do pacote de 10)
+ * Cada bloco tem N questões NOVAS + as erradas dos blocos anteriores (carry-over).
+ * Exemplo: bloco 1 = 10 novas. Errou 8 → bloco 2 = 10 novas + 8 erradas = 18.
+ * Errou 7 desses 18 → bloco 3 = 10 novas + 7 erradas = 17. E assim por diante.
  */
-export const BLOCK_SIZES = [10, 20, 30] as const;
+export const BLOCK_NEW_PER_BLOCK = 10;
 
 /**
  * Retorna a configuração de um bloco pelo número.
- * Blocos além do array repetem o último tamanho disponível.
+ * O size é dinamico (depende de quantas erradas tem carry-over),
+ * mas pra retrocompatibilidade retornamos o size BASE (só novas).
  */
 export function getBlockConfig(blockNumber: number): BlockConfig {
-  const index = Math.min(blockNumber - 1, BLOCK_SIZES.length - 1);
-  const size = BLOCK_SIZES[index] ?? BLOCK_SIZES[BLOCK_SIZES.length - 1];
-  return { blockNumber, size };
+  return { blockNumber, size: BLOCK_NEW_PER_BLOCK };
 }
 
 /**
  * Inicializa o estado de um bloco a partir das questões disponíveis.
- * Seleciona as questões correspondentes ao bloco (pela ordem).
+ * @param carryOverErrors - IDs de questões erradas em blocos anteriores que
+ *                          devem ser revisadas neste novo bloco. Aparecem
+ *                          ANTES das novas questões do bloco.
  */
 export function initializeBlock(
   questions: Question[],
   blockNumber: number,
+  carryOverErrors: string[] = [],
 ): QBLState {
-  const config = getBlockConfig(blockNumber);
+  // Offset de questões NOVAS = (blockNumber - 1) * BLOCK_NEW_PER_BLOCK
+  const offset = (blockNumber - 1) * BLOCK_NEW_PER_BLOCK;
+  const sorted = [...questions].sort((a, b) => a.questionOrder - b.questionOrder);
+  const novas = sorted.slice(offset, offset + BLOCK_NEW_PER_BLOCK).map((q) => q.id);
 
-  // Calcula o offset: soma dos tamanhos dos blocos anteriores
-  let offset = 0;
-  for (let b = 1; b < blockNumber; b++) {
-    offset += getBlockConfig(b).size;
+  // Bloco real = carry-over (revisão) + novas, sem duplicar
+  const seen = new Set<string>();
+  const questionsInBlock: string[] = [];
+  for (const id of [...carryOverErrors, ...novas]) {
+    if (!seen.has(id)) {
+      seen.add(id);
+      questionsInBlock.push(id);
+    }
   }
 
-  // Seleciona as questões do bloco atual (respeitando a ordem)
-  const sorted = [...questions].sort((a, b) => a.questionOrder - b.questionOrder);
-  const blockQuestions = sorted.slice(offset, offset + config.size);
+  // Quantas das primeiras IDs são revisão (vieram do carry-over)
+  const carryOverCount = carryOverErrors.filter((id) => seen.has(id)).length;
 
   return {
-    currentBlock: config,
-    questionsInBlock: blockQuestions.map((q) => q.id),
+    currentBlock: { blockNumber, size: questionsInBlock.length },
+    questionsInBlock,
     currentIndex: 0,
     errorsInBlock: 0,
     retryQueue: [],
+    carryOverCount,
   };
 }
 
@@ -125,18 +135,10 @@ export function processAnswer(
   let advancedToNextBlock = false;
 
   if (allQuestionsAnswered) {
-    if (newState.retryQueue.length > 0) {
-      // Ainda há questões para revisar — recarrega o bloco com a fila
-      newState.questionsInBlock = [...newState.retryQueue];
-      newState.retryQueue = [];
-      newState.currentIndex = 0;
-      newState.inRetryMode = true;
-    } else {
-      // Bloco finalizado sem pendências
-      blockCompleted = true;
-      const nextBlock = getNextBlock(state.currentBlock.blockNumber);
-      advancedToNextBlock = nextBlock !== null;
-    }
+    // Bloco terminado — retryQueue (se houver) vira carry-over pro próximo bloco,
+    // NÃO repete no mesmo. Engine de aprendizado espaçado: dia X + dia X+1.
+    blockCompleted = true;
+    advancedToNextBlock = true; // sempre tenta avançar (chamador decide se há próximo)
   }
 
   const result: AnswerResult = {
@@ -163,13 +165,11 @@ export function isBlockComplete(state: QBLState): boolean {
 }
 
 /**
- * Retorna a configuração do próximo bloco, ou null se não houver mais blocos.
- * Limita ao número de blocos definidos em BLOCK_SIZES.
+ * Retorna a configuração do próximo bloco.
+ * Sempre retorna um bloco — o chamador decide se há questões novas
+ * disponíveis (se não houver, avança pra outro pacote).
  */
 export function getNextBlock(currentBlock: number): BlockConfig | null {
-  if (currentBlock >= BLOCK_SIZES.length) {
-    return null;
-  }
   return getBlockConfig(currentBlock + 1);
 }
 

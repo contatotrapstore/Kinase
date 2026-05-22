@@ -885,17 +885,41 @@ async function handleAnswer(
 
   // Determine next step
   if (result.blockCompleted) {
-    if (result.advancedToNextBlock) {
-      const nextBlockNum = newState.currentBlock.blockNumber + 1;
-      session.state = initializeBlock(session.questions, nextBlockNum);
+    // Carry-over: erros DESTE bloco passam pro próximo bloco como revisão
+    const carryOver = newState.retryQueue;
+    const nextBlockNum = newState.currentBlock.blockNumber + 1;
 
+    // Tenta inicializar próximo bloco do MESMO pacote
+    const candidateState = initializeBlock(session.questions, nextBlockNum, carryOver);
+    const hasNewQuestionsInNextBlock = candidateState.questionsInBlock.length > carryOver.length;
+    const hasAnyToReview = candidateState.questionsInBlock.length > 0;
+
+    if (hasNewQuestionsInNextBlock || hasAnyToReview) {
+      // Avança bloco no mesmo pacote (tem novas E/OU tem revisão pra fechar)
+      session.state = candidateState;
+      const reviewCount = carryOver.length;
+      const newCount = candidateState.questionsInBlock.length - reviewCount;
+      const detalhe = reviewCount > 0
+        ? `\n📚 ${reviewCount} para revisar + ${newCount} novas = ${candidateState.questionsInBlock.length} questões`
+        : `\n${newCount} questões novas`;
       await adapter.sendText(
         phone,
-        `*Parabéns!* Você completou o bloco ${newState.currentBlock.blockNumber}. Avançando para o bloco ${nextBlockNum}...`
+        `*Parabéns!* Você completou o bloco ${newState.currentBlock.blockNumber}. 🎯\n\nIniciando bloco ${nextBlockNum}.${detalhe}`,
       );
+      await saveSession(session.user.id, session.pacoteId, {
+        userId: session.user.id,
+        pacoteId: session.pacoteId,
+        currentBlock: candidateState.currentBlock.blockNumber,
+        currentQuestionIndex: 0,
+        score: session.score,
+        errorsInBlock: 0,
+        retryQueue: [],
+        totalCorrect: session.totalCorrect,
+        totalAnswered: session.totalAnswered,
+      });
       await sendCurrentQuestion(adapter, phone, session);
     } else {
-      // Completou todos os blocos do pacote atual — tenta avançar pro próximo
+      // Pacote esgotado (sem novas + sem revisão) — migrar pra próximo pacote
       await completeSession(session.user.id, session.pacoteId);
       const nextPacote = await getNextReadyPacote(session.user.id);
       if (nextPacote) {
@@ -972,8 +996,10 @@ async function sendCurrentQuestion(
     await adapter.sendImage(phone, questionData.imageUrl, `Questão ${displayNumber}`);
   }
 
-  // Header de revisão quando a questão veio da retry queue (questões que ele errou)
-  if (state.inRetryMode) {
+  // Header de revisão quando a questão atual veio do carry-over (errada num bloco anterior)
+  const isReviewQuestion =
+    (state.carryOverCount ?? 0) > 0 && state.currentIndex < (state.carryOverCount ?? 0);
+  if (isReviewQuestion || state.inRetryMode) {
     await adapter.sendText(
       phone,
       "📚 *Revisão* — Esta é uma questão que você errou antes. Responda novamente:",

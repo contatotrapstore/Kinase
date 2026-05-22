@@ -51,8 +51,9 @@ export interface QBLState {
   questionsInBlock: string[];    // IDs das questões no bloco atual
   currentIndex: number;          // Índice da questão atual dentro do bloco
   errorsInBlock: number;         // Erros acumulados no bloco
-  retryQueue: string[];          // IDs das questões erradas para revisão
-  inRetryMode?: boolean;         // True quando questionsInBlock foi recarregado da retryQueue (questões erradas voltando)
+  retryQueue: string[];          // IDs das questões erradas neste bloco — viram carry-over no próximo
+  inRetryMode?: boolean;         // [LEGADO] mantido por compat com sessões antigas — não setado na lógica nova
+  carryOverCount?: number;       // Quantas das PRIMEIRAS questionsInBlock são revisão (vieram do bloco anterior)
 }
 
 /** Resultado do processamento de uma resposta */
