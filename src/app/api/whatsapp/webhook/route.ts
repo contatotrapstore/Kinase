@@ -104,7 +104,7 @@ async function getReadyPacoteQuestions(): Promise<{
   const { data: rows, error } = await supabase
     .from("questoes")
     .select(
-      "id, pacote_id, question_order, text, image_url, explanation, created_at, opcoes!inner(id), pacotes!inner(status)"
+      "id, pacote_id, question_order, text, image_url, explanation, source, created_at, opcoes!inner(id), pacotes!inner(status)"
     )
     .eq("opcoes.is_correct", true)
     .eq("pacotes.status", "ready")
@@ -142,6 +142,7 @@ async function getReadyPacoteQuestions(): Promise<{
     explanationOriginal: r.explanation ?? null,
     explanationRewritten: null,
     createdAt: r.created_at,
+    source: r.source ?? null,
   }));
 
   return { pacoteId: bestPacoteId, questions };
@@ -157,7 +158,7 @@ async function getQuestionsForPacote(pacoteId: string): Promise<Question[]> {
   const { data: rows, error } = await supabase
     .from("questoes")
     .select(
-      "id, pacote_id, question_order, text, image_url, explanation, created_at, opcoes!inner(id)"
+      "id, pacote_id, question_order, text, image_url, explanation, source, created_at, opcoes!inner(id)"
     )
     .eq("pacote_id", pacoteId)
     .eq("opcoes.is_correct", true)
@@ -178,6 +179,7 @@ async function getQuestionsForPacote(pacoteId: string): Promise<Question[]> {
     explanationOriginal: r.explanation ?? null,
     explanationRewritten: null,
     createdAt: r.created_at,
+    source: r.source ?? null,
   }));
 }
 
@@ -206,7 +208,7 @@ async function getNextReadyPacote(userId: string): Promise<{
   const { data: rows, error } = await supabase
     .from("questoes")
     .select(
-      "id, pacote_id, question_order, text, image_url, explanation, created_at, opcoes!inner(id), pacotes!inner(status, name)"
+      "id, pacote_id, question_order, text, image_url, explanation, source, created_at, opcoes!inner(id), pacotes!inner(status, name)"
     )
     .eq("opcoes.is_correct", true)
     .eq("pacotes.status", "ready")
@@ -235,6 +237,7 @@ async function getNextReadyPacote(userId: string): Promise<{
     explanationOriginal: r.explanation ?? null,
     explanationRewritten: null,
     createdAt: r.created_at,
+    source: r.source ?? null,
   }));
 
   return { pacoteId: bestPacoteId, name, questions };
@@ -501,10 +504,20 @@ export async function POST(request: NextRequest) {
         if (saved) {
           const questions = await getQuestionsForPacote(saved.pacoteId);
           if (questions.length > 0) {
-            const state = initializeBlock(questions, saved.currentBlock);
-            state.currentIndex = saved.currentQuestionIndex;
-            state.errorsInBlock = saved.errorsInBlock;
-            state.retryQueue = saved.retryQueue;
+            // CRÍTICO: restaurar o array EXATO que foi exibido (não reconstruir),
+            // senão o índice aponta pra questão errada (comentário não bate).
+            const restoredBlock =
+              saved.questionsInBlock && saved.questionsInBlock.length > 0
+                ? saved.questionsInBlock
+                : initializeBlock(questions, saved.currentBlock).questionsInBlock;
+            const state: QBLState = {
+              currentBlock: { blockNumber: saved.currentBlock, size: restoredBlock.length },
+              questionsInBlock: restoredBlock,
+              currentIndex: saved.currentQuestionIndex,
+              errorsInBlock: saved.errorsInBlock,
+              retryQueue: saved.retryQueue,
+              carryOverCount: saved.carryOverCount,
+            };
             sessions.set(phone, {
               user: { id: user.id, phone: user.phone, name: user.name },
               pacoteId: saved.pacoteId,
@@ -583,10 +596,19 @@ async function handleStart(
   if (existing) {
     const questions = await getQuestionsForPacote(existing.pacoteId);
     if (questions.length > 0) {
-      const state = initializeBlock(questions, existing.currentBlock);
-      state.currentIndex = Math.min(existing.currentQuestionIndex, state.questionsInBlock.length - 1);
-      state.errorsInBlock = existing.errorsInBlock;
-      state.retryQueue = existing.retryQueue ?? [];
+      // Restaurar o array EXATO salvo (não reconstruir) pra não desalinhar
+      const restoredBlock =
+        existing.questionsInBlock && existing.questionsInBlock.length > 0
+          ? existing.questionsInBlock
+          : initializeBlock(questions, existing.currentBlock).questionsInBlock;
+      const state: QBLState = {
+        currentBlock: { blockNumber: existing.currentBlock, size: restoredBlock.length },
+        questionsInBlock: restoredBlock,
+        currentIndex: Math.min(existing.currentQuestionIndex, restoredBlock.length - 1),
+        errorsInBlock: existing.errorsInBlock,
+        retryQueue: existing.retryQueue ?? [],
+        carryOverCount: existing.carryOverCount,
+      };
 
       const session: UserSession = {
         user,
@@ -641,6 +663,8 @@ async function handleStart(
     score: session.score,
     errorsInBlock: session.state.errorsInBlock,
     retryQueue: session.state.retryQueue ?? [],
+    questionsInBlock: session.state.questionsInBlock,
+    carryOverCount: session.state.carryOverCount ?? 0,
     totalCorrect: session.totalCorrect,
     totalAnswered: session.totalAnswered,
   });
@@ -807,6 +831,8 @@ async function handleAnswer(
       score: session.score,
       errorsInBlock: session.state.errorsInBlock,
       retryQueue: session.state.retryQueue ?? [],
+      questionsInBlock: session.state.questionsInBlock,
+      carryOverCount: session.state.carryOverCount ?? 0,
       totalCorrect: session.totalCorrect,
       totalAnswered: session.totalAnswered,
     });
@@ -867,6 +893,8 @@ async function handleAnswer(
     score: session.score,
     errorsInBlock: session.state.errorsInBlock,
     retryQueue: session.state.retryQueue ?? [],
+    questionsInBlock: session.state.questionsInBlock,
+    carryOverCount: session.state.carryOverCount ?? 0,
     totalCorrect: session.totalCorrect,
     totalAnswered: session.totalAnswered,
   });
@@ -914,6 +942,8 @@ async function handleAnswer(
         score: session.score,
         errorsInBlock: 0,
         retryQueue: [],
+        questionsInBlock: candidateState.questionsInBlock,
+        carryOverCount: candidateState.carryOverCount ?? 0,
         totalCorrect: session.totalCorrect,
         totalAnswered: session.totalAnswered,
       });
@@ -935,6 +965,8 @@ async function handleAnswer(
           score: session.score,
           errorsInBlock: 0,
           retryQueue: [],
+          questionsInBlock: newState.questionsInBlock,
+          carryOverCount: newState.carryOverCount ?? 0,
           totalCorrect: session.totalCorrect,
           totalAnswered: session.totalAnswered,
         });
@@ -1008,7 +1040,7 @@ async function sendCurrentQuestion(
 
   await adapter.sendText(
     phone,
-    questionMessage(displayNumber, questionData.text, optionLabels)
+    questionMessage(displayNumber, questionData.text, optionLabels, questionData.source)
   );
 }
 

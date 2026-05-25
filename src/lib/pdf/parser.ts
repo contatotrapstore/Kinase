@@ -856,6 +856,20 @@ function parseQuestionBlock(
   // Limpa quebras de linha internas no enunciado para um texto corrido
   questionText = questionText.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
 
+  // ----- Extrair origem "ANO BANCA" do início (ex: "2022 UNICAMP Homem...") -----
+  // Guarda em `reference` (vira source no banco) e limpa o enunciado.
+  if (!reference) {
+    const prefixMatch = questionText.match(
+      /^((?:19|20)\d{2})\s+([A-ZÀ-Ý][A-ZÀ-Ý0-9\-\s/.]{1,40}?)\s+(?=[A-ZÀ-Ý][a-zà-ÿ])/,
+    );
+    if (prefixMatch) {
+      const ano = prefixMatch[1];
+      const banca = prefixMatch[2].trim().replace(/\s+/g, " ");
+      reference = `${banca} ${ano}`;
+      questionText = questionText.slice(prefixMatch[0].length).trim();
+    }
+  }
+
   // ----- Detecta imagem -----
   const hasImage = IMAGE_KEYWORDS_RE.test(block);
 

@@ -43,6 +43,7 @@ export interface Question {
   explanationOriginal: string | null;
   explanationRewritten: string | null;
   createdAt: string;
+  source?: string | null;        // origem/ano/banca da questão (ex: "UNICAMP 2022")
 }
 
 /** Estado interno do motor QBL durante a sessão */

@@ -119,11 +119,15 @@ export async function POST(request: NextRequest) {
 
     // 4. Inserir questões
     const questoesInsert = questions.map(
-      (q: { order: number; text: string; explanation?: string }, i: number) => ({
+      (
+        q: { order: number; text: string; explanation?: string; source?: string; reference?: string },
+        i: number,
+      ) => ({
         pacote_id: pacoteIdToUse,
         question_order: q.order ?? i + 1,
         text: q.text,
         explanation: q.explanation ?? null,
+        source: q.source ?? q.reference ?? null,
       })
     );
 

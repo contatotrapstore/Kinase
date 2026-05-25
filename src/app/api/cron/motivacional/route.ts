@@ -16,12 +16,12 @@ export const maxDuration = 60;
  * varias frases pra nao soar robotico.
  */
 const MENSAGENS = [
-  "Eii, Dr! Tava sentindo sua falta por aqui. Que tal voltar e responder mais uma? 💪",
-  "Lembrete amigo: 2 minutinhos hoje = uma questão a menos pra estudar amanhã. Bora?",
-  "Hoje é um bom dia pra responder mais uma. Não deixa a sequência cair! 🔥",
-  "Sua próxima questão tá esperando. 30 segundos de prática agora rende muito depois.",
-  "Manda qualquer letra (A/B/C/D) que te mando uma questão nova! 🚀",
-  "Dr, seu cérebro tá pedindo um exercício. Volta aí, é rapidinho.",
+  "Dr(a), suas questões de hoje estão te esperando! Que tal 2 minutinhos de prática agora? 📚",
+  "Faz um tempinho que não te vejo por aqui. Bora manter o ritmo dos estudos? 💪",
+  "Sua evolução depende da constância. Manda uma letra (A/B/C/D) e seguimos pra próxima! 🚀",
+  "Constância vence talento. Volta aqui e responde mais uma — leva menos de 1 minuto. 🔥",
+  "Que tal revisar uma questão hoje? Seu eu do dia da prova agradece. 🙌",
+  "Bora reativar os estudos? Manda qualquer letra que eu te envio uma questão na hora.",
 ];
 
 export async function GET() {

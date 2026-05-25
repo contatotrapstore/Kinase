@@ -58,21 +58,19 @@ export function questionMessage(
   number: number,
   text: string,
   options: { label: string; text: string }[],
+  source?: string | null,
 ): string {
   const header = `*Questão ${number}*`;
   const optionLines = options
     .map((o) => `*${o.label})* ${o.text}`)
     .join('\n');
 
-  return [
-    header,
-    '',
-    text,
-    '',
-    optionLines,
-    '',
-    '_Responda com a letra: A, B, C ou D_',
-  ].join('\n');
+  const lines = [header];
+  if (source && source.trim()) {
+    lines.push(`_${source.trim()}_`);
+  }
+  lines.push('', text, '', optionLines, '', '_Mande sua resposta: A, B, C ou D_');
+  return lines.join('\n');
 }
 
 /**

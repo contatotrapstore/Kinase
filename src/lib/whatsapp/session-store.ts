@@ -10,6 +10,8 @@ export interface SessionData {
   retryQueue: string[];
   totalCorrect: number;
   totalAnswered: number;
+  questionsInBlock?: string[];   // array EXATO de IDs do bloco atual (com carry-over) — restaura sem reconstruir
+  carryOverCount?: number;       // quantas das primeiras questionsInBlock são revisão
 }
 
 /**
@@ -31,6 +33,8 @@ export async function saveSession(
       score: data.score,
       errors_in_block: data.errorsInBlock,
       retry_queue: data.retryQueue,
+      questions_in_block: data.questionsInBlock ?? null,
+      carry_over_count: data.carryOverCount ?? 0,
       total_correct: data.totalCorrect,
       total_answered: data.totalAnswered,
       status: "in_progress",
@@ -80,6 +84,8 @@ export async function loadSession(
     retryQueue: data.retry_queue ?? [],
     totalCorrect: data.total_correct,
     totalAnswered: data.total_answered,
+    questionsInBlock: data.questions_in_block ?? undefined,
+    carryOverCount: data.carry_over_count ?? 0,
   };
 }
 
