@@ -545,7 +545,7 @@ export async function POST(request: NextRequest) {
       await handleProgress(adapter, phone);
     } else if (command === "/ajuda" || command === "/help") {
       await handleHelp(adapter, phone);
-    } else if (/^[a-d]$/i.test(command)) {
+    } else if (/^[a-e]$/i.test(command)) {
       await handleAnswer(adapter, phone, command.toUpperCase());
     } else {
       await adapter.sendText(
@@ -804,7 +804,7 @@ async function handleAnswer(
   if (!selectedOption) {
     await adapter.sendText(
       phone,
-      `Alternativa *${letter}* não encontrada. Responda com *A*, *B*, *C* ou *D*.`
+      `Alternativa *${letter}* não encontrada nesta questão. Opções disponíveis: ${options.map((o) => `*${o.label}*`).join(', ')}.`
     );
     return;
   }

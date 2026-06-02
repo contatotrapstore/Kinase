@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
     // 4. Inserir questões
     const questoesInsert = questions.map(
       (
-        q: { order: number; text: string; explanation?: string; source?: string; reference?: string },
+        q: { order: number; text: string; explanation?: string; source?: string; reference?: string; questionType?: string },
         i: number,
       ) => ({
         pacote_id: pacoteIdToUse,
@@ -128,6 +128,7 @@ export async function POST(request: NextRequest) {
         text: q.text,
         explanation: q.explanation ?? null,
         source: q.source ?? q.reference ?? null,
+        question_type: q.questionType ?? 'multiple_choice',
       })
     );
 
@@ -182,7 +183,11 @@ export async function POST(request: NextRequest) {
     }
 
     // 6. Upload images for questions that have hasImage=true
-    if (imageList.length > 0) {
+    // FEATURE FLAG: desabilitado por padrão até termos extrator dedicado
+    // (extrator atual rasteriza página inteira → vira banners/cabeçalhos no lugar
+    // de imagens médicas reais). Ative com ENABLE_QUESTION_IMAGES=true se quiser.
+    const enableImages = process.env.ENABLE_QUESTION_IMAGES === 'true';
+    if (enableImages && imageList.length > 0) {
       // Build a map of question order -> hasImage from the request
       const questionsWithImage = questions
         .filter((q: { hasImage?: boolean }) => q.hasImage)

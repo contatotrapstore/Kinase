@@ -69,7 +69,15 @@ export function questionMessage(
   if (source && source.trim()) {
     lines.push(`_${source.trim()}_`);
   }
-  lines.push('', text, '', optionLines, '', '_Mande sua resposta: A, B, C ou D_');
+  // Rodapé adaptado ao formato da questão
+  const labels = options.map((o) => o.label);
+  let footer: string;
+  if (labels.length === 2 && labels.includes('C') && labels.includes('E')) {
+    footer = '_Responda *C* (Certo) ou *E* (Errado)_';
+  } else {
+    footer = `_Mande sua resposta: ${labels.join(', ').replace(/, ([^,]+)$/, ' ou $1')}_`;
+  }
+  lines.push('', text, '', optionLines, '', footer);
   return lines.join('\n');
 }
 

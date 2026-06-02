@@ -29,14 +29,30 @@ export async function GET() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const supabase = createServiceClient() as any;
 
-    // Usuarios com progresso ativo cujo progresso foi atualizado ha >24h
-    // (evita disparar pra quem acabou de comecar)
-    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    // Window: cron roda toda hora entre 11h-23h UTC (= 8h-20h Brasília).
+    // Pra cada user elegível, sorteia se manda agora (prob = 1/horas_restantes).
+    // Resultado: cada user recebe 1x/dia em horário aleatório dentro do range.
+    const nowUtc = new Date();
+    const hourUtc = nowUtc.getUTCHours();
+    const START_HOUR = 11;
+    const END_HOUR = 23;
+    if (hourUtc < START_HOUR || hourUtc > END_HOUR) {
+      return NextResponse.json({ ok: true, skipped: 'fora do range 11-23 UTC' });
+    }
+    const horasRestantes = END_HOUR - hourUtc + 1; // inclui hora atual
+    const probabilidade = 1 / horasRestantes;
+    const ehUltimaHora = hourUtc === END_HOUR;
+
+    // Cutoff: ultima resposta/atualizacao ha mais de 24h
+    const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    // Cutoff: nao enviar mais de 1x por dia (24h desde ultima motivacional)
+    const cutoffEnvio = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
     const { data: stale, error: queryErr } = await supabase
       .from("progresso_usuario")
-      .select("usuario_id, updated_at, usuarios!inner(id, phone)")
+      .select("usuario_id, updated_at, usuarios!inner(id, phone, last_motivacional_sent_at)")
       .eq("status", "in_progress")
-      .lt("updated_at", cutoff);
+      .lt("updated_at", cutoff24h);
 
     if (queryErr) {
       console.error("[cron/motivacional] erro query:", queryErr);
@@ -51,26 +67,50 @@ export async function GET() {
 
     let sent = 0;
     let failed = 0;
+    let skipped_recent = 0;
+    let skipped_dice = 0;
 
     for (const row of (stale ?? []) as any[]) {
-      const phone = row.usuarios?.phone;
-      if (!phone) continue;
+      const usuario = row.usuarios;
+      if (!usuario?.phone) continue;
+
+      // Skip se ja enviou nas ultimas 24h (anti-spam)
+      if (usuario.last_motivacional_sent_at && usuario.last_motivacional_sent_at > cutoffEnvio) {
+        skipped_recent += 1;
+        continue;
+      }
+
+      // Sorteio: na ultima hora envia certo; senao roleta com prob = 1/horas_restantes
+      const sortou = ehUltimaHora || Math.random() < probabilidade;
+      if (!sortou) {
+        skipped_dice += 1;
+        continue;
+      }
+
       const msg = MENSAGENS[Math.floor(Math.random() * MENSAGENS.length)];
       try {
-        await adapter.sendText(phone, msg);
+        await adapter.sendText(usuario.phone, msg);
+        await supabase
+          .from("usuarios")
+          .update({ last_motivacional_sent_at: new Date().toISOString() })
+          .eq("id", usuario.id);
         sent += 1;
       } catch (e) {
-        console.error(`[motivacional] falha pra ${phone}:`, e);
+        console.error(`[motivacional] falha pra ${usuario.phone}:`, e);
         failed += 1;
       }
     }
 
     return NextResponse.json({
       ok: true,
-      ts: new Date().toISOString(),
+      ts: nowUtc.toISOString(),
+      hora_utc: hourUtc,
+      probabilidade: probabilidade.toFixed(2),
+      candidatos: stale?.length ?? 0,
       sent,
       failed,
-      candidatos: stale?.length ?? 0,
+      skipped_recent,
+      skipped_dice,
     });
   } catch (err) {
     console.error("[cron/motivacional] erro:", err);

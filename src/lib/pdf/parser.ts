@@ -15,6 +15,7 @@ export interface ParsedQuestion {
   hasImage: boolean;
   areaConhecimento?: string;
   reference?: string;
+  questionType?: 'multiple_choice' | 'true_false';   // V/F = "Julgue se Certo ou Errado"
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +138,7 @@ const COMENTARIO_RE = /\n\s*COMENT[AÁ]RIO\s*:\s*/i;
  * EXIGE: início de linha + ":" obrigatório + boundary após a letra.
  * Sem isso, captura falsos positivos do tipo "Resposta aos antibióticos" → A.
  */
-const GABARITO_RE = /(?:^|\n)\s*(?:Gabarito|Resposta)\s*:\s*(?:letra\s+)?([A-Da-d])\b/i;
+const GABARITO_RE = /(?:^|\n)\s*(?:Gabarito|Resposta)\s*:\s*(?:letra\s+)?([A-Ea-e])\b/i;
 
 /**
  * Referência entre parênteses no início da questão, ex:
@@ -167,7 +168,7 @@ const GABARITO_HEADER_RE =
  * Regex para "Resposta: letra X" no final do comentário.
  * EXIGE ":" obrigatório + boundary pra não capturar "Resposta aos..." → A.
  */
-const RESPOSTA_LETRA_RE = /(?:^|\n|[.!?]\s+)Resposta\s*:\s*(?:letra\s+)?([A-Da-d])\b/i;
+const RESPOSTA_LETRA_RE = /(?:^|\n|[.!?]\s+)Resposta\s*:\s*(?:letra\s+)?([A-Ea-e])\b/i;
 
 /**
  * Regex para alternativas inline no formato gabarito:
@@ -894,18 +895,18 @@ function parseQuestionBlock(
     // Ordem importa: mais específico primeiro
     const positivePatterns = [
       // "alternativa correta é a letra X" / "alternativa correta: X"
-      /alternativa\s+(?:correta|certa)\s*[:.\s]+(?:é\s+)?(?:a\s+)?(?:letra\s+)?([A-DÀÁÂÃa-dàáâã])\b/i,
+      /alternativa\s+(?:correta|certa)\s*[:.\s]+(?:é\s+)?(?:a\s+)?(?:letra\s+)?([A-EÀÁÂÃa-eàáâã])\b/i,
       // "letra X" + qualquer pontuação/espaço + "correta/certa"
       // Cobre: "letra B é correta", "letra B - correta", "letra B: correta"
-      /letra\s+([A-DÀÁÂÃa-dàáâã])\s*[-:.,–—\s]+(?:é\s+)?(?:a\s+)?(?:correta|certa|verdadeira)\b/i,
+      /letra\s+([A-EÀÁÂÃa-eàáâã])\s*[-:.,–—\s]+(?:é\s+)?(?:a\s+)?(?:correta|certa|verdadeira)\b/i,
       // "(letra X - correta)" — variação com parênteses
-      /\(\s*letra\s+([A-DÀÁÂÃa-dàáâã])\s*[-:.\s]+(?:correta|certa)/i,
+      /\(\s*letra\s+([A-EÀÁÂÃa-eàáâã])\s*[-:.\s]+(?:correta|certa)/i,
       // "alternativa X é (a) correta"
-      /alternativa\s+([A-DÀÁÂÃa-dàáâã])\s+(?:é\s+)?(?:a\s+)?(?:correta|certa|verdadeira)/i,
+      /alternativa\s+([A-EÀÁÂÃa-eàáâã])\s+(?:é\s+)?(?:a\s+)?(?:correta|certa|verdadeira)/i,
       // "considerou/banca considerou a alternativa X"
-      /(?:banca\s+)?considerou\s+(?:a\s+)?(?:alternativa\s+|letra\s+)?([A-DÀÁÂÃa-dàáâã])\s+(?:como\s+)?(?:correta|certa)?/i,
+      /(?:banca\s+)?considerou\s+(?:a\s+)?(?:alternativa\s+|letra\s+)?([A-EÀÁÂÃa-eàáâã])\s+(?:como\s+)?(?:correta|certa)?/i,
       // "Resposta: letra X" / "Resposta: X" / "Resposta letra X" / "Gabarito X"
-      /(?:gabarito|resposta)\s*[:.]?\s*(?:letra\s+)?([A-DÀÁÂÃa-dàáâã])\b/i,
+      /(?:gabarito|resposta)\s*[:.]?\s*(?:letra\s+)?([A-EÀÁÂÃa-eàáâã])\b/i,
     ];
 
     for (const pat of positivePatterns) {
@@ -913,7 +914,7 @@ function parseQuestionBlock(
       if (m) {
         let cl = m[1].toUpperCase();
         if (ACCENT_MAP[cl]) cl = ACCENT_MAP[cl];
-        if (cl !== "A" && cl !== "B" && cl !== "C" && cl !== "D") continue;
+        if (!["A", "B", "C", "D", "E"].includes(cl)) continue;
         const opt = options.find((o) => o.label === cl);
         if (opt) {
           options.forEach((o) => (o.isCorrect = false));
@@ -947,7 +948,33 @@ function parseQuestionBlock(
     cleanOptions.forEach((o) => (o.isCorrect = false));
   }
 
-  // 3. Descartar a questão se ficar sem opções
+  // ----- Detectar V/F (Certo/Errado) quando não há opções A-E -----
+  // Padrão CESPE/concurso: "Julgue o item: [afirmação]. Resposta: Certo|Errado"
+  let questionType: 'multiple_choice' | 'true_false' = 'multiple_choice';
+  if (cleanOptions.length === 0) {
+    const allText = `${questionText} ${explanation ?? ""} ${block}`;
+    const isVF =
+      /\bjulgue\b/i.test(questionText) ||
+      /\b(certo|errado)\b.*\b(certo|errado)\b/i.test(allText) ||
+      /\(\s*\)\s*certo\b/i.test(allText) ||
+      /^(certo|errado|verdadeiro|falso)$/im.test((explanation ?? "").trim());
+
+    if (isVF) {
+      // Detectar gabarito V/F
+      const gabVF =
+        /(?:gabarito|resposta)\s*:?\s*(certo|errado|verdadeiro|falso)/i.exec(allText)?.[1] ??
+        /\b(certo|errado)\b\s*$/im.exec((explanation ?? "").trim())?.[1];
+      const correto = gabVF ? /cert|verd/i.test(gabVF) : null;
+
+      questionType = 'true_false';
+      cleanOptions.push(
+        { label: 'C', text: 'Certo', isCorrect: correto === true },
+        { label: 'E', text: 'Errado', isCorrect: correto === false },
+      );
+    }
+  }
+
+  // Descartar a questão se ficar sem opções (nem múltipla nem V/F detectados)
   if (cleanOptions.length === 0) return null;
 
   return {
@@ -958,6 +985,7 @@ function parseQuestionBlock(
     hasImage,
     areaConhecimento: area,
     reference,
+    questionType,
   };
 }
 
