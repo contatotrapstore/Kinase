@@ -12,6 +12,26 @@ export interface SessionData {
   totalAnswered: number;
   questionsInBlock?: string[];   // array EXATO de IDs do bloco atual (com carry-over) — restaura sem reconstruir
   carryOverCount?: number;       // quantas das primeiras questionsInBlock são revisão
+  awaitingDifficulty?: AwaitingDifficulty | null;  // payload pendente entre resposta A-E e feedback
+}
+
+/**
+ * Estado "aguardando avaliação F/M/D" — usuário já respondeu A-E, mas
+ * ainda não disse se achou Fácil/Médio/Difícil. Salvo até resposta F/M/D
+ * chegar (ou comando que cancele).
+ */
+export interface AwaitingDifficulty {
+  respostaId: string;            // id em respostas — pra UPDATE difficulty_rating depois
+  questionId: string;
+  selectedOptionId: string;
+  isCorrect: boolean;
+  correctOption: { label: string; text: string } | null;
+  explanation: string;
+  blockCompleted: boolean;
+  advancedToNextBlock: boolean;
+  skippedNoGabarito?: boolean;
+  retryQueueAfter: string[];     // retryQueue resultante (passa pro carry-over no avanço)
+  errorsInBlockAfter: number;
 }
 
 /**
@@ -35,6 +55,7 @@ export async function saveSession(
       retry_queue: data.retryQueue,
       questions_in_block: data.questionsInBlock ?? null,
       carry_over_count: data.carryOverCount ?? 0,
+      awaiting_difficulty: data.awaitingDifficulty ?? null,
       total_correct: data.totalCorrect,
       total_answered: data.totalAnswered,
       status: "in_progress",
@@ -86,6 +107,7 @@ export async function loadSession(
     totalAnswered: data.total_answered,
     questionsInBlock: data.questions_in_block ?? undefined,
     carryOverCount: data.carry_over_count ?? 0,
+    awaitingDifficulty: data.awaiting_difficulty ?? null,
   };
 }
 

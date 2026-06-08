@@ -29,24 +29,11 @@ export async function GET() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const supabase = createServiceClient() as any;
 
-    // Window: cron roda toda hora entre 11h-23h UTC (= 8h-20h Brasília).
-    // Pra cada user elegível, sorteia se manda agora (prob = 1/horas_restantes).
-    // Resultado: cada user recebe 1x/dia em horário aleatório dentro do range.
+    // Invocado por Supabase pg_cron 2x/dia (14h e 22h UTC = 11h e 19h Brasília).
+    // Throttle: 1 mensagem por user a cada 12h (evita 2x no mesmo dia se rede falhar).
     const nowUtc = new Date();
-    const hourUtc = nowUtc.getUTCHours();
-    const START_HOUR = 11;
-    const END_HOUR = 23;
-    if (hourUtc < START_HOUR || hourUtc > END_HOUR) {
-      return NextResponse.json({ ok: true, skipped: 'fora do range 11-23 UTC' });
-    }
-    const horasRestantes = END_HOUR - hourUtc + 1; // inclui hora atual
-    const probabilidade = 1 / horasRestantes;
-    const ehUltimaHora = hourUtc === END_HOUR;
-
-    // Cutoff: ultima resposta/atualizacao ha mais de 24h
     const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    // Cutoff: nao enviar mais de 1x por dia (24h desde ultima motivacional)
-    const cutoffEnvio = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const cutoffEnvio = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
 
     const { data: stale, error: queryErr } = await supabase
       .from("progresso_usuario")
@@ -68,22 +55,14 @@ export async function GET() {
     let sent = 0;
     let failed = 0;
     let skipped_recent = 0;
-    let skipped_dice = 0;
 
     for (const row of (stale ?? []) as any[]) {
       const usuario = row.usuarios;
       if (!usuario?.phone) continue;
 
-      // Skip se ja enviou nas ultimas 24h (anti-spam)
+      // Throttle: 1 mensagem por user a cada 12h
       if (usuario.last_motivacional_sent_at && usuario.last_motivacional_sent_at > cutoffEnvio) {
         skipped_recent += 1;
-        continue;
-      }
-
-      // Sorteio: na ultima hora envia certo; senao roleta com prob = 1/horas_restantes
-      const sortou = ehUltimaHora || Math.random() < probabilidade;
-      if (!sortou) {
-        skipped_dice += 1;
         continue;
       }
 
@@ -104,13 +83,10 @@ export async function GET() {
     return NextResponse.json({
       ok: true,
       ts: nowUtc.toISOString(),
-      hora_utc: hourUtc,
-      probabilidade: probabilidade.toFixed(2),
       candidatos: stale?.length ?? 0,
       sent,
       failed,
       skipped_recent,
-      skipped_dice,
     });
   } catch (err) {
     console.error("[cron/motivacional] erro:", err);

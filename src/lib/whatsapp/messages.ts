@@ -15,10 +15,10 @@ export function welcomeMessage(): string {
     '',
     '*Como funciona:*',
     '1. Você recebe questões de múltipla escolha',
-    '2. Responda com a letra: *A*, *B*, *C* ou *D*',
-    '3. Receba feedback imediato com explicação',
-    '4. Questões erradas voltam para revisão',
-    '5. Avance pelos blocos progressivos',
+    '2. Responda com a letra: *A*, *B*, *C*, *D* ou *E*',
+    '3. Avalie a dificuldade: *F* (Fácil) / *M* (Médio) / *D* (Difícil)',
+    '4. Receba feedback com explicação',
+    '5. Questões erradas voltam para revisão no próximo bloco',
     '',
     '*Comandos disponíveis:*',
     '/ranking — Ver ranking comparativo',
@@ -79,6 +79,29 @@ export function questionMessage(
   }
   lines.push('', text, '', optionLines, '', footer);
   return lines.join('\n');
+}
+
+/**
+ * Pergunta a dificuldade percebida da questão (F/M/D) ANTES de mostrar o feedback.
+ * Usado depois que o usuário responde A/B/C/D/E e antes do gabarito ser revelado.
+ */
+export function askDifficultyMessage(): string {
+  return [
+    '*Como você avaliou essa questão?*',
+    '',
+    '*F* — Fácil',
+    '*M* — Médio',
+    '*D* — Difícil',
+    '',
+    '_Sua avaliação ajuda a calibrar a dificuldade pra próximas questões._',
+  ].join('\n');
+}
+
+/**
+ * Resposta quando o usuário envia letra inválida no momento da avaliação F/M/D.
+ */
+export function invalidDifficultyMessage(): string {
+  return 'Responda apenas *F* (Fácil), *M* (Médio) ou *D* (Difícil) para avaliar a questão.';
 }
 
 /**

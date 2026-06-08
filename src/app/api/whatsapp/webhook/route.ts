@@ -16,10 +16,12 @@ import {
   helpMessage,
   questionMessage,
   feedbackMessage,
+  askDifficultyMessage,
+  invalidDifficultyMessage,
   rankingMessage,
   progressMessage,
 } from "@/lib/whatsapp/messages";
-import { saveSession, loadSession, completeSession } from "@/lib/whatsapp/session-store";
+import { saveSession, loadSession, completeSession, type AwaitingDifficulty } from "@/lib/whatsapp/session-store";
 
 // ============================================================
 // Types and in-memory session state
@@ -42,6 +44,8 @@ interface UserSession {
   totalAnswered: number;
   /** Cache of questions for the active pacote to avoid repeated fetches */
   questions: Question[];
+  /** Payload pendente entre resposta A-E e avaliação F/M/D (null se não aguarda) */
+  awaitingDifficulty?: AwaitingDifficulty | null;
 }
 
 /** In-memory store of active sessions keyed by phone number */
@@ -303,20 +307,42 @@ async function saveAnswer(
   selectedOptionId: string,
   isCorrect: boolean,
   wasRetry: boolean
-): Promise<void> {
+): Promise<string | null> {
   const supabase = createServiceClient() as any;
 
-  const { error } = await supabase.from("respostas").insert({
-    usuario_id: userId,
-    questao_id: questionId,
-    selected_option_id: selectedOptionId,
-    is_correct: isCorrect,
-    was_retry: wasRetry,
-  });
+  const { data, error } = await supabase
+    .from("respostas")
+    .insert({
+      usuario_id: userId,
+      questao_id: questionId,
+      selected_option_id: selectedOptionId,
+      is_correct: isCorrect,
+      was_retry: wasRetry,
+    })
+    .select("id")
+    .single();
 
   if (error) {
     console.error("[webhook] Erro ao salvar resposta:", error);
-    // Non-fatal: log but don't throw so the user flow continues
+    return null;
+  }
+  return data?.id ?? null;
+}
+
+/**
+ * Atualiza a dificuldade percebida (F/M/D) de uma resposta já salva.
+ */
+async function updateAnswerDifficulty(
+  respostaId: string,
+  difficulty: 'F' | 'M' | 'D',
+): Promise<void> {
+  const supabase = createServiceClient() as any;
+  const { error } = await supabase
+    .from("respostas")
+    .update({ difficulty_rating: difficulty })
+    .eq("id", respostaId);
+  if (error) {
+    console.error("[webhook] Erro ao atualizar difficulty:", error);
   }
 }
 
@@ -526,6 +552,7 @@ export async function POST(request: NextRequest) {
               totalCorrect: saved.totalCorrect,
               totalAnswered: saved.totalAnswered,
               questions,
+              awaitingDifficulty: saved.awaitingDifficulty ?? null,
             });
           }
         }
@@ -535,7 +562,16 @@ export async function POST(request: NextRequest) {
     // --- 2. Route to command or answer handler ---
     const command = text.toLowerCase();
 
-    if (command === "/start" || command === "/iniciar") {
+    // PRIORIDADE: se usuário tá aguardando dar nota F/M/D, qualquer letra única é tratada como rating
+    // (exceto comandos /). Letras inválidas no rating reprompt; comandos cancelam o aguardo silenciosamente.
+    const sessAwaiting = sessions.get(phone)?.awaitingDifficulty;
+    if (sessAwaiting && !command.startsWith('/')) {
+      if (/^[fmd]$/i.test(command)) {
+        await handleDifficultyRating(adapter, phone, command.toUpperCase() as 'F' | 'M' | 'D');
+      } else {
+        await adapter.sendText(phone, invalidDifficultyMessage());
+      }
+    } else if (command === "/start" || command === "/iniciar") {
       await handleStart(adapter, phone);
     } else if (command === "/restart" || command === "/reiniciar") {
       await handleRestart(adapter, phone);
@@ -868,8 +904,8 @@ async function handleAnswer(
   }
 
   // Persist answer and ranking to Supabase (non-blocking, errors are logged)
-  const wasRetry = result.shouldRetry; // if the engine flagged a retry, previous attempt was a retry
-  await saveAnswer(
+  void result.shouldRetry; // legacy reference — retries são detectados via questão reaparecer
+  const respostaId = await saveAnswer(
     session.user.id,
     currentQuestionId,
     selectedOption.id,
@@ -884,7 +920,43 @@ async function handleAnswer(
     session.totalAnswered
   );
 
-  // Persist session progress to DB
+  // === PAUSA pra avaliação F/M/D ANTES do feedback ===
+  // Captura tudo que advanceAfterAnswer vai precisar; persiste; espera F/M/D.
+  if (respostaId) {
+    const awaiting: AwaitingDifficulty = {
+      respostaId,
+      questionId: currentQuestionId,
+      selectedOptionId: selectedOption.id,
+      isCorrect: result.isCorrect,
+      correctOption: result.correctOption
+        ? { label: result.correctOption.label, text: result.correctOption.text }
+        : null,
+      explanation,
+      blockCompleted: result.blockCompleted,
+      advancedToNextBlock: result.advancedToNextBlock,
+      retryQueueAfter: newState.retryQueue,
+      errorsInBlockAfter: newState.errorsInBlock,
+    };
+    session.awaitingDifficulty = awaiting;
+    await saveSession(session.user.id, session.pacoteId, {
+      userId: session.user.id,
+      pacoteId: session.pacoteId,
+      currentBlock: session.state.currentBlock.blockNumber,
+      currentQuestionIndex: session.state.currentIndex,
+      score: session.score,
+      errorsInBlock: session.state.errorsInBlock,
+      retryQueue: session.state.retryQueue ?? [],
+      questionsInBlock: session.state.questionsInBlock,
+      carryOverCount: session.state.carryOverCount ?? 0,
+      awaitingDifficulty: awaiting,
+      totalCorrect: session.totalCorrect,
+      totalAnswered: session.totalAnswered,
+    });
+    await adapter.sendText(phone, askDifficultyMessage());
+    return;
+  }
+
+  // Fallback (sem respostaId): segue fluxo antigo sem pausa de difficulty
   await saveSession(session.user.id, session.pacoteId, {
     userId: session.user.id,
     pacoteId: session.pacoteId,
@@ -898,8 +970,6 @@ async function handleAnswer(
     totalCorrect: session.totalCorrect,
     totalAnswered: session.totalAnswered,
   });
-
-  // Send feedback (incluindo a opção correta quando errou — sem isso o usuário não aprende)
   await adapter.sendText(
     phone,
     feedbackMessage(
@@ -911,11 +981,27 @@ async function handleAnswer(
     ),
   );
 
-  // Determine next step
-  if (result.blockCompleted) {
+  await advanceAfterAnswer(adapter, phone, session, result.blockCompleted);
+}
+
+/**
+ * Após o feedback ter sido enviado (ou pulado no skipped), decide próxima ação:
+ * - Avançar bloco no mesmo pacote (com carry-over)
+ * - Trocar de pacote
+ * - Encerrar
+ * - Enviar próxima questão dentro do bloco
+ */
+async function advanceAfterAnswer(
+  adapter: WhatsAppAdapter,
+  phone: string,
+  session: UserSession,
+  blockCompleted: boolean,
+): Promise<void> {
+  if (blockCompleted) {
     // Carry-over: erros DESTE bloco passam pro próximo bloco como revisão
-    const carryOver = newState.retryQueue;
-    const nextBlockNum = newState.currentBlock.blockNumber + 1;
+    const carryOver = session.state.retryQueue;
+    const nextBlockNum = session.state.currentBlock.blockNumber + 1;
+    const blocoAnteriorNumero = session.state.currentBlock.blockNumber;
 
     // Tenta inicializar próximo bloco do MESMO pacote
     const candidateState = initializeBlock(session.questions, nextBlockNum, carryOver);
@@ -932,7 +1018,7 @@ async function handleAnswer(
         : `\n${newCount} questões novas`;
       await adapter.sendText(
         phone,
-        `*Parabéns!* Você completou o bloco ${newState.currentBlock.blockNumber}. 🎯\n\nIniciando bloco ${nextBlockNum}.${detalhe}`,
+        `*Parabéns!* Você completou o bloco ${blocoAnteriorNumero}. 🎯\n\nIniciando bloco ${nextBlockNum}.${detalhe}`,
       );
       await saveSession(session.user.id, session.pacoteId, {
         userId: session.user.id,
@@ -986,6 +1072,51 @@ async function handleAnswer(
     // Send next question (could be a retry question)
     await sendCurrentQuestion(adapter, phone, session);
   }
+}
+
+/**
+ * Recebe a avaliação F/M/D do usuário, grava no banco, envia o feedback que
+ * ficou pendente, limpa o awaitingDifficulty e avança o fluxo.
+ */
+async function handleDifficultyRating(
+  adapter: WhatsAppAdapter,
+  phone: string,
+  rating: 'F' | 'M' | 'D',
+): Promise<void> {
+  const session = sessions.get(phone);
+  if (!session?.awaitingDifficulty) {
+    // Sem awaiting — tratar como letra desconhecida (silencioso)
+    return;
+  }
+  const awaiting = session.awaitingDifficulty;
+
+  await updateAnswerDifficulty(awaiting.respostaId, rating);
+
+  // Limpa awaiting + persiste
+  session.awaitingDifficulty = null;
+  await saveSession(session.user.id, session.pacoteId, {
+    userId: session.user.id,
+    pacoteId: session.pacoteId,
+    currentBlock: session.state.currentBlock.blockNumber,
+    currentQuestionIndex: session.state.currentIndex,
+    score: session.score,
+    errorsInBlock: session.state.errorsInBlock,
+    retryQueue: session.state.retryQueue ?? [],
+    questionsInBlock: session.state.questionsInBlock,
+    carryOverCount: session.state.carryOverCount ?? 0,
+    awaitingDifficulty: null,
+    totalCorrect: session.totalCorrect,
+    totalAnswered: session.totalAnswered,
+  });
+
+  // Envia feedback que ficou pendente
+  await adapter.sendText(
+    phone,
+    feedbackMessage(awaiting.isCorrect, awaiting.explanation, awaiting.correctOption),
+  );
+
+  // Avança fluxo (próxima questão / próximo bloco / próximo pacote)
+  await advanceAfterAnswer(adapter, phone, session, awaiting.blockCompleted);
 }
 
 // ============================================================
