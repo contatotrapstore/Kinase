@@ -13,6 +13,7 @@ export interface SessionData {
   questionsInBlock?: string[];   // array EXATO de IDs do bloco atual (com carry-over) — restaura sem reconstruir
   carryOverCount?: number;       // quantas das primeiras questionsInBlock são revisão
   awaitingDifficulty?: AwaitingDifficulty | null;  // payload pendente entre resposta A-E e feedback
+  lastQuestionSentAt?: string | null;  // timestamp ISO de quando a última questão foi enviada (cálculo de tempo de resposta)
 }
 
 /**
@@ -56,6 +57,7 @@ export async function saveSession(
       questions_in_block: data.questionsInBlock ?? null,
       carry_over_count: data.carryOverCount ?? 0,
       awaiting_difficulty: data.awaitingDifficulty ?? null,
+      last_question_sent_at: data.lastQuestionSentAt ?? null,
       total_correct: data.totalCorrect,
       total_answered: data.totalAnswered,
       status: "in_progress",
@@ -108,6 +110,7 @@ export async function loadSession(
     questionsInBlock: data.questions_in_block ?? undefined,
     carryOverCount: data.carry_over_count ?? 0,
     awaitingDifficulty: data.awaiting_difficulty ?? null,
+    lastQuestionSentAt: data.last_question_sent_at ?? null,
   };
 }
 

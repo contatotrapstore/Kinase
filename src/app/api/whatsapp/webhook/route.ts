@@ -569,6 +569,7 @@ export async function POST(request: NextRequest) {
               totalAnswered: saved.totalAnswered,
               questions,
               awaitingDifficulty: saved.awaitingDifficulty ?? null,
+              lastQuestionSentAt: saved.lastQuestionSentAt ?? null,
             });
           }
         }
@@ -747,6 +748,7 @@ async function handleStart(
     retryQueue: session.state.retryQueue ?? [],
     questionsInBlock: session.state.questionsInBlock,
     carryOverCount: session.state.carryOverCount ?? 0,
+    lastQuestionSentAt: session.lastQuestionSentAt ?? null,
     totalCorrect: session.totalCorrect,
     totalAnswered: session.totalAnswered,
   });
@@ -915,6 +917,7 @@ async function handleAnswer(
       retryQueue: session.state.retryQueue ?? [],
       questionsInBlock: session.state.questionsInBlock,
       carryOverCount: session.state.carryOverCount ?? 0,
+      lastQuestionSentAt: session.lastQuestionSentAt ?? null,
       totalCorrect: session.totalCorrect,
       totalAnswered: session.totalAnswered,
     });
@@ -1014,6 +1017,7 @@ async function handleAnswer(
     retryQueue: session.state.retryQueue ?? [],
     questionsInBlock: session.state.questionsInBlock,
     carryOverCount: session.state.carryOverCount ?? 0,
+    lastQuestionSentAt: session.lastQuestionSentAt ?? null,
     totalCorrect: session.totalCorrect,
     totalAnswered: session.totalAnswered,
   });
@@ -1445,8 +1449,25 @@ async function sendCurrentQuestion(
     questionMessage(displayNumber, questionData.text, optionLabels, questionData.source)
   );
 
-  // Marca o momento do envio — saveAnswer usa pra preencher respostas.question_sent_at
+  // Marca o momento do envio + persiste no banco (sessão serverless perde memória entre requests)
   session.lastQuestionSentAt = new Date().toISOString();
+  if (session.pacoteId) {
+    await saveSession(session.user.id, session.pacoteId, {
+      userId: session.user.id,
+      pacoteId: session.pacoteId,
+      currentBlock: session.state.currentBlock.blockNumber,
+      currentQuestionIndex: session.state.currentIndex,
+      score: session.score,
+      errorsInBlock: session.state.errorsInBlock,
+      retryQueue: session.state.retryQueue ?? [],
+      questionsInBlock: session.state.questionsInBlock,
+      carryOverCount: session.state.carryOverCount ?? 0,
+      awaitingDifficulty: session.awaitingDifficulty,
+      lastQuestionSentAt: session.lastQuestionSentAt,
+      totalCorrect: session.totalCorrect,
+      totalAnswered: session.totalAnswered,
+    });
+  }
 }
 
 /**
