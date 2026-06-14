@@ -538,6 +538,34 @@ export async function POST(request: NextRequest) {
 
     console.log(`[webhook] Mensagem de ${phone}: "${text}"`);
 
+    // --- Hidrata awaitingForm + awaitingExplanationRating do banco (rodam fora de sessão de quiz) ---
+    // Esses estados ficam em usuarios.awaiting_form / awaiting_explanation_rating
+    // porque o pré-teste roda ANTES de qualquer sessão de questões existir.
+    const userForHydration = await getOrCreateUser(phone);
+    const supaH = createServiceClient() as any;
+    const { data: userState } = await supaH
+      .from('usuarios')
+      .select('awaiting_form, awaiting_explanation_rating')
+      .eq('id', userForHydration.id)
+      .maybeSingle();
+    if (userState?.awaiting_form || userState?.awaiting_explanation_rating) {
+      let sess = sessions.get(phone);
+      if (!sess) {
+        sess = {
+          user: userForHydration,
+          pacoteId: '',
+          state: { currentBlock: { blockNumber: 1, size: 0 }, questionsInBlock: [], currentIndex: 0, errorsInBlock: 0, retryQueue: [] },
+          score: 0,
+          totalCorrect: 0,
+          totalAnswered: 0,
+          questions: [],
+        };
+        sessions.set(phone, sess);
+      }
+      if (userState.awaiting_form) sess.awaitingForm = userState.awaiting_form as AwaitingForm;
+      if (userState.awaiting_explanation_rating) sess.awaitingExplanationRating = userState.awaiting_explanation_rating as { respostaId: string };
+    }
+
     // --- Restore session from DB if not in memory ---
     if (!sessions.has(phone)) {
       const user = await getOrCreateUser(phone);
@@ -1239,15 +1267,18 @@ async function iniciarForm(
     };
     sessions.set(phone, session);
   }
-  session.awaitingForm = {
+  const awaiting: AwaitingForm = {
     formularioId,
     tipo,
     perguntaIndex: 0,
     perguntas,
     respostasParciais: {},
   };
+  session.awaitingForm = awaiting;
+  // Persiste em usuarios.awaiting_form pra restaurar entre invocações serverless
+  await supabase.from('usuarios').update({ awaiting_form: awaiting }).eq('id', userId);
 
-  await enviarProximaPerguntaForm(adapter, phone, session.awaitingForm);
+  await enviarProximaPerguntaForm(adapter, phone, awaiting);
 }
 
 async function enviarProximaPerguntaForm(
@@ -1301,6 +1332,7 @@ async function handleFormAnswer(
       .eq('usuario_id', session.user.id);
 
     session.awaitingForm = null;
+    await supabase.from('usuarios').update({ awaiting_form: null }).eq('id', session.user.id);
     await adapter.sendText(
       phone,
       '✅ *Formulário concluído!* Obrigado pelas respostas.\n\n' +
@@ -1311,12 +1343,13 @@ async function handleFormAnswer(
     return;
   }
 
-  // Salva progresso parcial
+  // Salva progresso parcial + atualiza awaiting_form em usuarios (pro restore funcionar entre invocações)
   await supabase
     .from('formularios_respostas')
     .update({ respostas: form.respostasParciais })
     .eq('formulario_id', form.formularioId)
     .eq('usuario_id', session.user.id);
+  await supabase.from('usuarios').update({ awaiting_form: form }).eq('id', session.user.id);
 
   await enviarProximaPerguntaForm(adapter, phone, form);
 }
@@ -1365,7 +1398,10 @@ async function handleDifficultyRating(
   // Pergunta avaliação opcional da explicação (não bloqueante)
   // Só pergunta se HOUVE explicação real (não a frase genérica de "comentário não disponível")
   if (awaiting.explanation && awaiting.explanation.trim().length > 30) {
-    session.awaitingExplanationRating = { respostaId: awaiting.respostaId };
+    const ratingState = { respostaId: awaiting.respostaId };
+    session.awaitingExplanationRating = ratingState;
+    const supa = createServiceClient() as any;
+    await supa.from('usuarios').update({ awaiting_explanation_rating: ratingState }).eq('id', session.user.id);
     await adapter.sendText(
       phone,
       '_Esse comentário ajudou? Responda *1* (sim) ou *2* (não), ou mande a próxima letra pra pular._',
@@ -1392,6 +1428,7 @@ async function recordExplanationRatingIfPending(
     .update({ explanation_rating: rating })
     .eq('id', pending.respostaId);
   session.awaitingExplanationRating = null;
+  await supabase.from('usuarios').update({ awaiting_explanation_rating: null }).eq('id', session.user.id);
 }
 
 // ============================================================
