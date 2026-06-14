@@ -46,6 +46,20 @@ interface UserSession {
   questions: Question[];
   /** Payload pendente entre resposta A-E e avaliação F/M/D (null se não aguarda) */
   awaitingDifficulty?: AwaitingDifficulty | null;
+  /** Timestamp ISO de quando a questão atual foi enviada — popula respostas.question_sent_at */
+  lastQuestionSentAt?: string | null;
+  /** Estado de formulário em andamento (pré ou pós-teste) */
+  awaitingForm?: AwaitingForm | null;
+  /** Aguardando rating opcional 1/2 da última explicação (não bloqueante) */
+  awaitingExplanationRating?: { respostaId: string } | null;
+}
+
+interface AwaitingForm {
+  formularioId: string;
+  tipo: 'pre' | 'pos';
+  perguntaIndex: number;
+  perguntas: Array<{ id: string; texto: string; escala?: '1-5' | 'sim_nao' | 'texto' }>;
+  respostasParciais: Record<string, string>;
 }
 
 /** In-memory store of active sessions keyed by phone number */
@@ -306,7 +320,8 @@ async function saveAnswer(
   questionId: string,
   selectedOptionId: string,
   isCorrect: boolean,
-  wasRetry: boolean
+  wasRetry: boolean,
+  questionSentAt?: string | null,
 ): Promise<string | null> {
   const supabase = createServiceClient() as any;
 
@@ -318,6 +333,7 @@ async function saveAnswer(
       selected_option_id: selectedOptionId,
       is_correct: isCorrect,
       was_retry: wasRetry,
+      question_sent_at: questionSentAt ?? null,
     })
     .select("id")
     .single();
@@ -562,6 +578,31 @@ export async function POST(request: NextRequest) {
     // --- 2. Route to command or answer handler ---
     const command = text.toLowerCase();
 
+    // Formulário pré/pós-teste em andamento (qualquer texto vira resposta da pergunta atual)
+    const sessForm = sessions.get(phone);
+    if (sessForm?.awaitingForm && !command.startsWith('/')) {
+      await handleFormAnswer(adapter, phone, text);
+      return NextResponse.json({ success: true });
+    }
+
+    // Avaliação opcional da explicação (1=útil / 2=não útil); qualquer outra coisa marca skipped
+    const currentSess = sessions.get(phone);
+    if (currentSess?.awaitingExplanationRating && !command.startsWith('/')) {
+      if (command === '1') {
+        await recordExplanationRatingIfPending(currentSess, 'useful');
+        await adapter.sendText(phone, '_Obrigado pelo feedback!_ 👍');
+        return NextResponse.json({ success: true });
+      }
+      if (command === '2') {
+        await recordExplanationRatingIfPending(currentSess, 'not_useful');
+        await adapter.sendText(phone, '_Anotado. Vamos melhorar._ 👍');
+        return NextResponse.json({ success: true });
+      }
+      // Qualquer outra coisa (A-E pra próxima, F/M/D, etc.) marca como skipped e segue o fluxo
+      await recordExplanationRatingIfPending(currentSess, 'skipped');
+      // não retorna — deixa cair no resto do router
+    }
+
     // PRIORIDADE: se usuário tá aguardando dar nota F/M/D, qualquer letra única é tratada como rating
     // (exceto comandos /). Letras inválidas no rating reprompt; comandos cancelam o aguardo silenciosamente.
     const sessAwaiting = sessions.get(phone)?.awaitingDifficulty;
@@ -626,6 +667,11 @@ async function handleStart(
   phone: string
 ): Promise<void> {
   const user = await getOrCreateUser(phone);
+
+  // ANTES de qualquer coisa: tem formulário pré/pós pendente? Se sim, dispara e para.
+  if (await checkAndStartForm(adapter, phone, user.id)) {
+    return;
+  }
 
   // Retomar sessão se houver progresso ativo
   const existing = await loadSession(user.id);
@@ -910,7 +956,8 @@ async function handleAnswer(
     currentQuestionId,
     selectedOption.id,
     result.isCorrect,
-    false // first attempt; retries are tracked when the question re-appears
+    false, // first attempt; retries are tracked when the question re-appears
+    session.lastQuestionSentAt ?? null,
   );
   await upsertRanking(
     session.user.id,
@@ -1075,6 +1122,202 @@ async function advanceAfterAnswer(
 }
 
 /**
+ * Verifica se o usuário tem algum formulário pendente (pré ou pós-teste) e,
+ * se sim, INICIA o fluxo no bot. Retorna true se iniciou um formulário
+ * (caller deve PARAR aqui). Retorna false se nada pendente.
+ */
+async function checkAndStartForm(
+  adapter: WhatsAppAdapter,
+  phone: string,
+  userId: string,
+): Promise<boolean> {
+  const supabase = createServiceClient() as any;
+
+  // 1) Pré-teste: existe formulário ativo tipo=pre + user nunca respondeu
+  const { data: preForm } = await supabase
+    .from('formularios')
+    .select('id, nome, perguntas')
+    .eq('tipo', 'pre')
+    .eq('ativo', true)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (preForm) {
+    const { data: jaResp } = await supabase
+      .from('formularios_respostas')
+      .select('id, concluido_at')
+      .eq('formulario_id', preForm.id)
+      .eq('usuario_id', userId)
+      .maybeSingle();
+    if (!jaResp || !jaResp.concluido_at) {
+      await iniciarForm(adapter, phone, userId, 'pre', preForm.id, preForm.nome, preForm.perguntas);
+      return true;
+    }
+  }
+
+  // 2) Pós-teste: ativo + user já completou pré + atingiu gatilho + nunca completou pós
+  const { data: posForm } = await supabase
+    .from('formularios')
+    .select('id, nome, perguntas, trigger_apos_dias, trigger_apos_questoes')
+    .eq('tipo', 'pos')
+    .eq('ativo', true)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (posForm) {
+    const { data: jaRespPos } = await supabase
+      .from('formularios_respostas')
+      .select('id, concluido_at')
+      .eq('formulario_id', posForm.id)
+      .eq('usuario_id', userId)
+      .maybeSingle();
+    if (!jaRespPos || !jaRespPos.concluido_at) {
+      // Calcula gatilho
+      const { data: stats } = await supabase
+        .from('respostas')
+        .select('answered_at', { count: 'exact', head: false })
+        .eq('usuario_id', userId)
+        .order('answered_at', { ascending: true });
+      const totalRespostas = stats?.length ?? 0;
+      const primeiraResposta = stats?.[0]?.answered_at as string | undefined;
+      const diasDesdePrimeira = primeiraResposta
+        ? Math.floor((Date.now() - new Date(primeiraResposta).getTime()) / 86400000)
+        : 0;
+      const atingiu = (posForm.trigger_apos_dias && diasDesdePrimeira >= posForm.trigger_apos_dias)
+        || (posForm.trigger_apos_questoes && totalRespostas >= posForm.trigger_apos_questoes);
+      if (atingiu) {
+        await iniciarForm(adapter, phone, userId, 'pos', posForm.id, posForm.nome, posForm.perguntas);
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+async function iniciarForm(
+  adapter: WhatsAppAdapter,
+  phone: string,
+  userId: string,
+  tipo: 'pre' | 'pos',
+  formularioId: string,
+  nome: string,
+  perguntas: AwaitingForm['perguntas'],
+): Promise<void> {
+  const supabase = createServiceClient() as any;
+  // Cria linha de formularios_respostas com iniciado_at
+  await supabase
+    .from('formularios_respostas')
+    .upsert(
+      { formulario_id: formularioId, usuario_id: userId, respostas: {}, iniciado_at: new Date().toISOString() },
+      { onConflict: 'formulario_id,usuario_id' },
+    );
+
+  const intro = tipo === 'pre'
+    ? `*${nome}* 📋\n\nAntes de começarmos, ${perguntas.length} perguntas rápidas pra calibrarmos seu perfil.\n\nPode levar uns 2 minutinhos. Bora?`
+    : `*${nome}* 📋\n\nVocê concluiu uma etapa importante! Antes de continuar, ${perguntas.length} perguntas finais pra avaliarmos sua evolução.`;
+  await adapter.sendText(phone, intro);
+
+  // Atualiza session com awaitingForm
+  let session = sessions.get(phone);
+  if (!session) {
+    // Cria session mínima só pra carregar o estado de form
+    session = {
+      user: { id: userId, phone, name: phone.slice(-4) },
+      pacoteId: '',
+      state: { currentBlock: { blockNumber: 1, size: 0 }, questionsInBlock: [], currentIndex: 0, errorsInBlock: 0, retryQueue: [] },
+      score: 0,
+      totalCorrect: 0,
+      totalAnswered: 0,
+      questions: [],
+    };
+    sessions.set(phone, session);
+  }
+  session.awaitingForm = {
+    formularioId,
+    tipo,
+    perguntaIndex: 0,
+    perguntas,
+    respostasParciais: {},
+  };
+
+  await enviarProximaPerguntaForm(adapter, phone, session.awaitingForm);
+}
+
+async function enviarProximaPerguntaForm(
+  adapter: WhatsAppAdapter,
+  phone: string,
+  form: AwaitingForm,
+): Promise<void> {
+  const p = form.perguntas[form.perguntaIndex];
+  const total = form.perguntas.length;
+  const pos = form.perguntaIndex + 1;
+
+  let instrucao = '';
+  if (p.escala === '1-5') instrucao = '\n_Responda de *1* (discordo totalmente) a *5* (concordo totalmente)._';
+  else if (p.escala === 'sim_nao') instrucao = '\n_Responda *S* (sim) ou *N* (não)._';
+  else instrucao = '\n_Responda com um texto curto._';
+
+  await adapter.sendText(phone, `*${pos}/${total}* — ${p.texto}${instrucao}`);
+}
+
+async function handleFormAnswer(
+  adapter: WhatsAppAdapter,
+  phone: string,
+  text: string,
+): Promise<void> {
+  const session = sessions.get(phone);
+  if (!session?.awaitingForm) return;
+  const form = session.awaitingForm;
+  const perguntaAtual = form.perguntas[form.perguntaIndex];
+
+  // Validação por escala
+  if (perguntaAtual.escala === '1-5' && !/^[1-5]$/.test(text)) {
+    await adapter.sendText(phone, 'Por favor, responda com um número de *1* a *5*.');
+    return;
+  }
+  if (perguntaAtual.escala === 'sim_nao' && !/^[sn]$/i.test(text)) {
+    await adapter.sendText(phone, 'Por favor, responda *S* (sim) ou *N* (não).');
+    return;
+  }
+
+  form.respostasParciais[perguntaAtual.id] = text;
+  form.perguntaIndex += 1;
+
+  const supabase = createServiceClient() as any;
+
+  if (form.perguntaIndex >= form.perguntas.length) {
+    // Concluiu
+    await supabase
+      .from('formularios_respostas')
+      .update({ respostas: form.respostasParciais, concluido_at: new Date().toISOString() })
+      .eq('formulario_id', form.formularioId)
+      .eq('usuario_id', session.user.id);
+
+    session.awaitingForm = null;
+    await adapter.sendText(
+      phone,
+      '✅ *Formulário concluído!* Obrigado pelas respostas.\n\n' +
+        (form.tipo === 'pre'
+          ? 'Agora vamos começar com as questões. Manda */start* quando estiver pronto!'
+          : 'Você completou o pós-teste. Pode continuar respondendo questões à vontade.'),
+    );
+    return;
+  }
+
+  // Salva progresso parcial
+  await supabase
+    .from('formularios_respostas')
+    .update({ respostas: form.respostasParciais })
+    .eq('formulario_id', form.formularioId)
+    .eq('usuario_id', session.user.id);
+
+  await enviarProximaPerguntaForm(adapter, phone, form);
+}
+
+/**
  * Recebe a avaliação F/M/D do usuário, grava no banco, envia o feedback que
  * ficou pendente, limpa o awaitingDifficulty e avança o fluxo.
  */
@@ -1115,8 +1358,36 @@ async function handleDifficultyRating(
     feedbackMessage(awaiting.isCorrect, awaiting.explanation, awaiting.correctOption),
   );
 
+  // Pergunta avaliação opcional da explicação (não bloqueante)
+  // Só pergunta se HOUVE explicação real (não a frase genérica de "comentário não disponível")
+  if (awaiting.explanation && awaiting.explanation.trim().length > 30) {
+    session.awaitingExplanationRating = { respostaId: awaiting.respostaId };
+    await adapter.sendText(
+      phone,
+      '_Esse comentário ajudou? Responda *1* (sim) ou *2* (não), ou mande a próxima letra pra pular._',
+    );
+  }
+
   // Avança fluxo (próxima questão / próximo bloco / próximo pacote)
   await advanceAfterAnswer(adapter, phone, session, awaiting.blockCompleted);
+}
+
+/**
+ * Marca a avaliação da última explicação. Se o user pulou (mandou outra letra
+ * que não 1/2), grava como 'skipped' e segue o fluxo.
+ */
+async function recordExplanationRatingIfPending(
+  session: UserSession,
+  rating: 'useful' | 'not_useful' | 'skipped',
+): Promise<void> {
+  const pending = session.awaitingExplanationRating;
+  if (!pending) return;
+  const supabase = createServiceClient() as any;
+  await supabase
+    .from('respostas')
+    .update({ explanation_rating: rating })
+    .eq('id', pending.respostaId);
+  session.awaitingExplanationRating = null;
 }
 
 // ============================================================
@@ -1173,6 +1444,9 @@ async function sendCurrentQuestion(
     phone,
     questionMessage(displayNumber, questionData.text, optionLabels, questionData.source)
   );
+
+  // Marca o momento do envio — saveAnswer usa pra preencher respostas.question_sent_at
+  session.lastQuestionSentAt = new Date().toISOString();
 }
 
 /**

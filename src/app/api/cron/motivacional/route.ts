@@ -73,6 +73,12 @@ export async function GET() {
           .from("usuarios")
           .update({ last_motivacional_sent_at: new Date().toISOString() })
           .eq("id", usuario.id);
+        // Histórico pra metricas (quantos enviados + retorno em 24h)
+        await supabase.from('motivacional_envios').insert({
+          usuario_id: usuario.id,
+          mensagem: msg,
+          sent_at: new Date().toISOString(),
+        });
         sent += 1;
       } catch (e) {
         console.error(`[motivacional] falha pra ${usuario.phone}:`, e);
