@@ -1,43 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin, UnauthorizedError } from "@/lib/auth/require-admin";
 import { createServiceClient } from "@/lib/supabase/service";
+import { validatePerguntas } from "@/lib/formularios/schema";
 
 export const runtime = "nodejs";
 
-type Escala = "1-5" | "sim_nao" | "texto";
 type Tipo = "pre" | "pos";
-
-interface Pergunta {
-  id: string;
-  texto: string;
-  escala: Escala;
-}
-
-function isValidEscala(v: unknown): v is Escala {
-  return v === "1-5" || v === "sim_nao" || v === "texto";
-}
-
-function validatePerguntas(input: unknown): Pergunta[] | null {
-  if (!Array.isArray(input)) return null;
-  const out: Pergunta[] = [];
-  for (const p of input) {
-    if (
-      !p ||
-      typeof p !== "object" ||
-      typeof (p as any).id !== "string" ||
-      typeof (p as any).texto !== "string" ||
-      !isValidEscala((p as any).escala)
-    ) {
-      return null;
-    }
-    out.push({
-      id: (p as any).id,
-      texto: (p as any).texto,
-      escala: (p as any).escala,
-    });
-  }
-  return out;
-}
 
 async function authOrError() {
   try {

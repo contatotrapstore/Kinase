@@ -398,7 +398,15 @@ export default function MetricasPage() {
             disabled={!data?.ultimaAtividade?.length}
           >
             <Download className="mr-2 h-4 w-4" />
-            Exportar CSV
+            Atividade (CSV)
+          </Button>
+          <Button
+            onClick={() => {
+              window.location.href = '/api/metricas/export';
+            }}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Export completo (CSV)
           </Button>
         </div>
       </div>

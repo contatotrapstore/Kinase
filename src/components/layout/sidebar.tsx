@@ -10,7 +10,6 @@ import {
   Users,
   Trophy,
   Menu,
-  ClipboardList,
   FileText,
   BarChart3,
 } from "lucide-react";
@@ -31,7 +30,6 @@ const navItems = [
   { href: "/alunos", label: "Usuários", icon: Users },
   { href: "/ranking", label: "Ranking", icon: Trophy },
   { href: "/metricas", label: "Métricas", icon: BarChart3 },
-  { href: "/pesquisas", label: "Pesquisas", icon: ClipboardList },
   { href: "/formularios", label: "Formulários", icon: FileText },
 ];
 

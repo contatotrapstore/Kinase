@@ -37,7 +37,7 @@ export async function GET() {
 
     const { data: stale, error: queryErr } = await supabase
       .from("progresso_usuario")
-      .select("usuario_id, updated_at, usuarios!inner(id, phone, last_motivacional_sent_at)")
+      .select("usuario_id, updated_at, usuarios!inner(id, phone, last_motivacional_sent_at, experimento_started_at)")
       .eq("status", "in_progress")
       .lt("updated_at", cutoff24h);
 
@@ -55,6 +55,7 @@ export async function GET() {
     let sent = 0;
     let failed = 0;
     let skipped_recent = 0;
+    let skipped_pausa_experimento = 0;
 
     for (const row of (stale ?? []) as any[]) {
       const usuario = row.usuarios;
@@ -64,6 +65,19 @@ export async function GET() {
       if (usuario.last_motivacional_sent_at && usuario.last_motivacional_sent_at > cutoffEnvio) {
         skipped_recent += 1;
         continue;
+      }
+
+      // Plano de Validação Kinase: D1-7 com lembretes, D8-14 SEM lembretes (retenção orgânica).
+      // Users fora do experimento (experimento_started_at NULL) recebem normal.
+      // Users com >14 dias no experimento voltam ao fluxo normal.
+      if (usuario.experimento_started_at) {
+        const diasNoExp = Math.floor(
+          (Date.now() - new Date(usuario.experimento_started_at).getTime()) / 86400000,
+        );
+        if (diasNoExp >= 7 && diasNoExp < 14) {
+          skipped_pausa_experimento += 1;
+          continue;
+        }
       }
 
       const msg = MENSAGENS[Math.floor(Math.random() * MENSAGENS.length)];
@@ -93,6 +107,7 @@ export async function GET() {
       sent,
       failed,
       skipped_recent,
+      skipped_pausa_experimento,
     });
   } catch (err) {
     console.error("[cron/motivacional] erro:", err);

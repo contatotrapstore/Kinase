@@ -52,14 +52,25 @@ interface UserSession {
   awaitingForm?: AwaitingForm | null;
   /** Aguardando rating opcional 1/2 da última explicação (não bloqueante) */
   awaitingExplanationRating?: { respostaId: string } | null;
+  // Feedback per-bloco: setado quando blockCompleted=true. Aguarda 1/2/skip; depois commita avanço.
+  awaitingBlockFeedback?: { blockNumber: number; pacoteId: string } | null;
 }
+
+import type { Pergunta as PerguntaSchema } from '@/lib/formularios/schema';
 
 interface AwaitingForm {
   formularioId: string;
   tipo: 'pre' | 'pos';
   perguntaIndex: number;
-  perguntas: Array<{ id: string; texto: string; escala?: '1-5' | 'sim_nao' | 'texto' }>;
-  respostasParciais: Record<string, string>;
+  perguntas: PerguntaSchema[];
+  respostasParciais: Record<string, unknown>;  // texto, numero, id de opção ou array de ids
+  // State machine pra top3: enquanto !== null, a próxima resposta é tratada como
+  // "escolha da posição N do ranking". Ao completar 3 escolhas, grava array e avança pergunta.
+  topRanking?: {
+    perguntaId: string;
+    posicao: 1 | 2 | 3;
+    escolhidasIds: string[];
+  } | null;
 }
 
 /** In-memory store of active sessions keyed by phone number */
@@ -545,10 +556,10 @@ export async function POST(request: NextRequest) {
     const supaH = createServiceClient() as any;
     const { data: userState } = await supaH
       .from('usuarios')
-      .select('awaiting_form, awaiting_explanation_rating')
+      .select('awaiting_form, awaiting_explanation_rating, awaiting_block_feedback')
       .eq('id', userForHydration.id)
       .maybeSingle();
-    if (userState?.awaiting_form || userState?.awaiting_explanation_rating) {
+    if (userState?.awaiting_form || userState?.awaiting_explanation_rating || userState?.awaiting_block_feedback) {
       let sess = sessions.get(phone);
       if (!sess) {
         sess = {
@@ -564,6 +575,7 @@ export async function POST(request: NextRequest) {
       }
       if (userState.awaiting_form) sess.awaitingForm = userState.awaiting_form as AwaitingForm;
       if (userState.awaiting_explanation_rating) sess.awaitingExplanationRating = userState.awaiting_explanation_rating as { respostaId: string };
+      if (userState.awaiting_block_feedback) sess.awaitingBlockFeedback = userState.awaiting_block_feedback as { blockNumber: number; pacoteId: string };
     }
 
     // --- Restore session from DB if not in memory ---
@@ -614,22 +626,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    // Avaliação opcional da explicação (1=útil / 2=não útil); qualquer outra coisa marca skipped
-    const currentSess = sessions.get(phone);
-    if (currentSess?.awaitingExplanationRating && !command.startsWith('/')) {
-      if (command === '1') {
-        await recordExplanationRatingIfPending(currentSess, 'useful');
-        await adapter.sendText(phone, '_Obrigado pelo feedback!_ 👍');
-        return NextResponse.json({ success: true });
-      }
-      if (command === '2') {
-        await recordExplanationRatingIfPending(currentSess, 'not_useful');
-        await adapter.sendText(phone, '_Anotado. Vamos melhorar._ 👍');
-        return NextResponse.json({ success: true });
-      }
-      // Qualquer outra coisa (A-E pra próxima, F/M/D, etc.) marca como skipped e segue o fluxo
-      await recordExplanationRatingIfPending(currentSess, 'skipped');
-      // não retorna — deixa cair no resto do router
+    // Feedback PER-BLOCO (não per-question): 1/2/qualquer-outra-coisa libera avanço
+    const blockSess = sessions.get(phone);
+    if (blockSess?.awaitingBlockFeedback && !command.startsWith('/')) {
+      await handleBlockFeedback(adapter, phone, text);
+      return NextResponse.json({ success: true });
     }
 
     // PRIORIDADE: se usuário tá aguardando dar nota F/M/D, qualquer letra única é tratada como rating
@@ -1077,10 +1078,54 @@ async function advanceAfterAnswer(
   blockCompleted: boolean,
 ): Promise<void> {
   if (blockCompleted) {
-    // Carry-over: erros DESTE bloco passam pro próximo bloco como revisão
-    const carryOver = session.state.retryQueue;
-    const nextBlockNum = session.state.currentBlock.blockNumber + 1;
+    // Pergunta UMA vez ao fim do bloco: "explicações deste bloco ficaram claras?".
+    // Conforme Plano de Validação: per-bloco, não-bloqueante (qualquer resposta libera próximo bloco).
     const blocoAnteriorNumero = session.state.currentBlock.blockNumber;
+    const awaiting = { blockNumber: blocoAnteriorNumero, pacoteId: session.pacoteId };
+    session.awaitingBlockFeedback = awaiting;
+    const supaBF = createServiceClient() as any;
+    await supaBF.from('usuarios').update({ awaiting_block_feedback: awaiting }).eq('id', session.user.id);
+    // Persistir session ANTES do prompt — preserva retryQueue até feedback voltar.
+    await saveSession(session.user.id, session.pacoteId, {
+      userId: session.user.id,
+      pacoteId: session.pacoteId,
+      currentBlock: session.state.currentBlock.blockNumber,
+      currentQuestionIndex: session.state.currentIndex,
+      score: session.score,
+      errorsInBlock: session.state.errorsInBlock,
+      retryQueue: session.state.retryQueue ?? [],
+      questionsInBlock: session.state.questionsInBlock,
+      carryOverCount: session.state.carryOverCount ?? 0,
+      awaitingDifficulty: null,
+      totalCorrect: session.totalCorrect,
+      totalAnswered: session.totalAnswered,
+    });
+    await adapter.sendText(
+      phone,
+      `🎯 *Bloco ${blocoAnteriorNumero} completo!*\n\nAs explicações deste bloco ficaram claras? Responda *1* (sim) ou *2* (não), ou mande qualquer coisa pra seguir.`,
+    );
+    return;
+  } else {
+    // Send next question (could be a retry question)
+    await sendCurrentQuestion(adapter, phone, session);
+  }
+}
+
+/**
+ * Avança efetivamente pro próximo bloco/pacote depois que o feedback do bloco foi
+ * registrado (ou pulado). Move pra cá a lógica que antes ficava dentro de
+ * advanceAfterAnswer no path blockCompleted=true.
+ */
+async function commitBlockAdvance(
+  adapter: WhatsAppAdapter,
+  phone: string,
+  session: UserSession,
+): Promise<void> {
+  // Carry-over: erros DESTE bloco passam pro próximo bloco como revisão
+  const carryOver = session.state.retryQueue;
+  const nextBlockNum = session.state.currentBlock.blockNumber + 1;
+  const blocoAnteriorNumero = session.state.currentBlock.blockNumber;
+  {
 
     // Tenta inicializar próximo bloco do MESMO pacote
     const candidateState = initializeBlock(session.questions, nextBlockNum, carryOver);
@@ -1147,10 +1192,40 @@ async function advanceAfterAnswer(
         );
       }
     }
-  } else {
-    // Send next question (could be a retry question)
-    await sendCurrentQuestion(adapter, phone, session);
   }
+}
+
+/**
+ * Grava o feedback do bloco e libera o avanço. Chamado quando user responde
+ * 1/2/qualquer-outra-coisa após o prompt per-bloco. Não-bloqueante:
+ * qualquer texto que não seja 1 ou 2 é marcado como 'skipped'.
+ */
+async function handleBlockFeedback(
+  adapter: WhatsAppAdapter,
+  phone: string,
+  text: string,
+): Promise<void> {
+  const session = sessions.get(phone);
+  if (!session?.awaitingBlockFeedback) return;
+  const pending = session.awaitingBlockFeedback;
+  const t = text.trim();
+  const rating: 'useful' | 'not_useful' | 'skipped' =
+    t === '1' ? 'useful' : t === '2' ? 'not_useful' : 'skipped';
+
+  const supabase = createServiceClient() as any;
+  await supabase.from('block_feedback').insert({
+    usuario_id: session.user.id,
+    pacote_id: pending.pacoteId,
+    block_number: pending.blockNumber,
+    rating,
+  });
+  session.awaitingBlockFeedback = null;
+  await supabase.from('usuarios').update({ awaiting_block_feedback: null }).eq('id', session.user.id);
+
+  if (rating === 'useful') await adapter.sendText(phone, '_Obrigado pelo feedback!_ 👍');
+  else if (rating === 'not_useful') await adapter.sendText(phone, '_Anotado. Vamos melhorar._');
+
+  await commitBlockAdvance(adapter, phone, session);
 }
 
 /**
@@ -1206,22 +1281,21 @@ async function checkAndStartForm(
       .eq('usuario_id', userId)
       .maybeSingle();
     if (!jaRespPos || !jaRespPos.concluido_at) {
-      // Calcula gatilho
-      const { data: stats } = await supabase
-        .from('respostas')
-        .select('answered_at', { count: 'exact', head: false })
-        .eq('usuario_id', userId)
-        .order('answered_at', { ascending: true });
-      const totalRespostas = stats?.length ?? 0;
-      const primeiraResposta = stats?.[0]?.answered_at as string | undefined;
-      const diasDesdePrimeira = primeiraResposta
-        ? Math.floor((Date.now() - new Date(primeiraResposta).getTime()) / 86400000)
-        : 0;
-      const atingiu = (posForm.trigger_apos_dias && diasDesdePrimeira >= posForm.trigger_apos_dias)
-        || (posForm.trigger_apos_questoes && totalRespostas >= posForm.trigger_apos_questoes);
-      if (atingiu) {
-        await iniciarForm(adapter, phone, userId, 'pos', posForm.id, posForm.nome, posForm.perguntas);
-        return true;
+      // Gatilho relativo ao início do experimento DESSE user (setado ao concluir pré).
+      // experimento_started_at NULL = user ainda não entrou no experimento; nunca dispara pós.
+      const { data: u } = await supabase
+        .from('usuarios')
+        .select('experimento_started_at')
+        .eq('id', userId)
+        .maybeSingle();
+      const inicio = u?.experimento_started_at as string | null | undefined;
+      if (inicio) {
+        const diasDesdeExperimento = Math.floor((Date.now() - new Date(inicio).getTime()) / 86400000);
+        const limite = posForm.trigger_apos_dias ?? 14;
+        if (diasDesdeExperimento >= limite) {
+          await iniciarForm(adapter, phone, userId, 'pos', posForm.id, posForm.nome, posForm.perguntas);
+          return true;
+        }
       }
     }
   }
@@ -1290,12 +1364,67 @@ async function enviarProximaPerguntaForm(
   const total = form.perguntas.length;
   const pos = form.perguntaIndex + 1;
 
-  let instrucao = '';
-  if (p.escala === '1-5') instrucao = '\n_Responda de *1* (discordo totalmente) a *5* (concordo totalmente)._';
-  else if (p.escala === 'sim_nao') instrucao = '\n_Responda *S* (sim) ou *N* (não)._';
-  else instrucao = '\n_Responda com um texto curto._';
+  // Top3: cada chamada renderiza a próxima posição (1ª, 2ª, 3ª) com opções restantes.
+  if (p.escala === 'top3' && form.topRanking) {
+    const restantes = (p.opcoes ?? []).filter((o) => !form.topRanking!.escolhidasIds.includes(o.id));
+    const listaNum = restantes.map((o, i) => `*${i + 1})* ${o.label}`).join('\n');
+    const ordinal = form.topRanking.posicao === 1 ? '1ª' : form.topRanking.posicao === 2 ? '2ª' : '3ª';
+    await adapter.sendText(
+      phone,
+      `*${pos}/${total}* — ${p.texto}\n\n${ordinal} mais importante:\n${listaNum}\n\n_Responda com o número._`,
+    );
+    return;
+  }
 
-  await adapter.sendText(phone, `*${pos}/${total}* — ${p.texto}${instrucao}`);
+  let instrucao = '';
+  let listaOpcoes = '';
+  switch (p.escala) {
+    case '1-5':
+      instrucao = '\n_Responda de *1* (discordo totalmente) a *5* (concordo totalmente)._';
+      break;
+    case 'sim_nao':
+      instrucao = '\n_Responda *S* (sim) ou *N* (não)._';
+      break;
+    case 'texto':
+      instrucao = '\n_Responda com um texto curto._';
+      break;
+    case 'numerico': {
+      const range = (typeof p.min === 'number' && typeof p.max === 'number')
+        ? ` de *${p.min}* a *${p.max}*`
+        : '';
+      instrucao = `\n_Responda com um número${range}._`;
+      break;
+    }
+    case 'single_choice':
+    case 'top1': {
+      const opcoes = p.opcoes ?? [];
+      listaOpcoes = '\n\n' + opcoes.map((o, i) => `*${i + 1})* ${o.label}`).join('\n');
+      instrucao = '\n\n_Responda com o *número* da opção._';
+      break;
+    }
+    case 'multi_choice': {
+      const opcoes = p.opcoes ?? [];
+      listaOpcoes = '\n\n' + opcoes.map((o, i) => `*${i + 1})* ${o.label}`).join('\n');
+      const max = p.maxSelecoes ? ` (até *${p.maxSelecoes}*)` : '';
+      instrucao = `\n\n_Responda com os *números* separados por vírgula${max}. Ex: *1,3*_`;
+      break;
+    }
+    case 'top3': {
+      // Primeira chamada: ainda sem state — inicializa.
+      // (a renderização real acontece no branch top3 acima na próxima invocação,
+      // que é onde sempre cai depois do init.)
+      form.topRanking = { perguntaId: p.id, posicao: 1, escolhidasIds: [] };
+      const restantes = p.opcoes ?? [];
+      const listaNum = restantes.map((o, i) => `*${i + 1})* ${o.label}`).join('\n');
+      await adapter.sendText(
+        phone,
+        `*${pos}/${total}* — ${p.texto}\n\nManda primeiro a *mais importante*:\n${listaNum}\n\n_Responda com o número._`,
+      );
+      return;
+    }
+  }
+
+  await adapter.sendText(phone, `*${pos}/${total}* — ${p.texto}${listaOpcoes}${instrucao}`);
 }
 
 async function handleFormAnswer(
@@ -1308,18 +1437,43 @@ async function handleFormAnswer(
   const form = session.awaitingForm;
   const perguntaAtual = form.perguntas[form.perguntaIndex];
 
-  // Validação por escala
-  if (perguntaAtual.escala === '1-5' && !/^[1-5]$/.test(text)) {
-    await adapter.sendText(phone, 'Por favor, responda com um número de *1* a *5*.');
-    return;
+  // top3: cada resposta é UMA posição. Após 3 escolhas, grava array e avança.
+  if (perguntaAtual.escala === 'top3' && form.topRanking) {
+    const restantes = (perguntaAtual.opcoes ?? []).filter(
+      (o) => !form.topRanking!.escolhidasIds.includes(o.id),
+    );
+    if (!/^\d+$/.test(text.trim())) {
+      await adapter.sendText(phone, 'Responda com o *número* da opção.');
+      return;
+    }
+    const i = Number(text.trim());
+    if (i < 1 || i > restantes.length) {
+      await adapter.sendText(phone, `Escolha entre *1* e *${restantes.length}*.`);
+      return;
+    }
+    form.topRanking.escolhidasIds.push(restantes[i - 1].id);
+    if (form.topRanking.posicao < 3 && form.topRanking.escolhidasIds.length < (perguntaAtual.opcoes?.length ?? 0)) {
+      form.topRanking.posicao = (form.topRanking.posicao + 1) as 1 | 2 | 3;
+      const supabaseTop = createServiceClient() as any;
+      await supabaseTop.from('usuarios').update({ awaiting_form: form }).eq('id', session.user.id);
+      await enviarProximaPerguntaForm(adapter, phone, form);
+      return;
+    }
+    // Concluiu o top3
+    form.respostasParciais[perguntaAtual.id] = form.topRanking.escolhidasIds;
+    form.topRanking = null;
+    form.perguntaIndex += 1;
+  } else {
+    // Outros tipos: validador centralizado
+    const { validarResposta } = await import('@/lib/formularios/schema');
+    const v = validarResposta(perguntaAtual, text);
+    if (!v.ok) {
+      await adapter.sendText(phone, v.erro ?? 'Resposta inválida.');
+      return;
+    }
+    form.respostasParciais[perguntaAtual.id] = v.valor ?? text;
+    form.perguntaIndex += 1;
   }
-  if (perguntaAtual.escala === 'sim_nao' && !/^[sn]$/i.test(text)) {
-    await adapter.sendText(phone, 'Por favor, responda *S* (sim) ou *N* (não).');
-    return;
-  }
-
-  form.respostasParciais[perguntaAtual.id] = text;
-  form.perguntaIndex += 1;
 
   const supabase = createServiceClient() as any;
 
@@ -1332,7 +1486,20 @@ async function handleFormAnswer(
       .eq('usuario_id', session.user.id);
 
     session.awaitingForm = null;
-    await supabase.from('usuarios').update({ awaiting_form: null }).eq('id', session.user.id);
+    // Ao concluir PRÉ-teste, marca início do experimento de 14 dias DESSE user.
+    // Só seta se ainda for null (idempotente — não muda se user já tinha experimento ativo).
+    const usuariosPatch: Record<string, unknown> = { awaiting_form: null };
+    if (form.tipo === 'pre') {
+      const { data: usrAtual } = await supabase
+        .from('usuarios')
+        .select('experimento_started_at')
+        .eq('id', session.user.id)
+        .maybeSingle();
+      if (!usrAtual?.experimento_started_at) {
+        usuariosPatch.experimento_started_at = new Date().toISOString();
+      }
+    }
+    await supabase.from('usuarios').update(usuariosPatch).eq('id', session.user.id);
     await adapter.sendText(
       phone,
       '✅ *Formulário concluído!* Obrigado pelas respostas.\n\n' +
@@ -1395,20 +1562,8 @@ async function handleDifficultyRating(
     feedbackMessage(awaiting.isCorrect, awaiting.explanation, awaiting.correctOption),
   );
 
-  // Pergunta avaliação opcional da explicação (não bloqueante)
-  // Só pergunta se HOUVE explicação real (não a frase genérica de "comentário não disponível")
-  if (awaiting.explanation && awaiting.explanation.trim().length > 30) {
-    const ratingState = { respostaId: awaiting.respostaId };
-    session.awaitingExplanationRating = ratingState;
-    const supa = createServiceClient() as any;
-    await supa.from('usuarios').update({ awaiting_explanation_rating: ratingState }).eq('id', session.user.id);
-    await adapter.sendText(
-      phone,
-      '_Esse comentário ajudou? Responda *1* (sim) ou *2* (não), ou mande a próxima letra pra pular._',
-    );
-  }
-
-  // Avança fluxo (próxima questão / próximo bloco / próximo pacote)
+  // Avança fluxo (próxima questão / pergunta feedback do bloco / próximo pacote)
+  // Avaliação 👍/👎 das explicações agora é PER-BLOCO (não mais per-question) — feita em advanceAfterAnswer.
   await advanceAfterAnswer(adapter, phone, session, awaiting.blockCompleted);
 }
 

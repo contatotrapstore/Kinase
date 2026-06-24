@@ -22,12 +22,46 @@ import {
 } from "lucide-react";
 
 type Tipo = "pre" | "pos";
-type Escala = "1-5" | "sim_nao" | "texto";
+type Escala =
+  | "1-5"
+  | "sim_nao"
+  | "texto"
+  | "single_choice"
+  | "multi_choice"
+  | "numerico"
+  | "top1"
+  | "top3";
+
+interface Opcao {
+  id: string;
+  label: string;
+}
 
 interface Pergunta {
   id: string;
   texto: string;
   escala: Escala;
+  opcoes?: Opcao[];
+  maxSelecoes?: number;
+  min?: number;
+  max?: number;
+}
+
+const escalasLabels: Record<Escala, string> = {
+  "1-5": "Escala 1-5",
+  sim_nao: "Sim / Não",
+  texto: "Texto livre",
+  single_choice: "Escolha única (opções)",
+  multi_choice: "Múltipla escolha (opções)",
+  numerico: "Número (livre / NPS)",
+  top1: "Top-1 (escolha 1)",
+  top3: "Top-3 (rankeie 3)",
+};
+
+const escalasComOpcoes: Escala[] = ["single_choice", "multi_choice", "top1", "top3"];
+
+function newOpcaoId() {
+  return `o_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`;
 }
 
 interface Formulario {
@@ -127,6 +161,18 @@ function FormularioDialog({
     if (form.perguntas.some((p) => !p.texto.trim())) {
       setError("Todas as perguntas precisam de texto");
       return;
+    }
+    for (const p of form.perguntas) {
+      if (escalasComOpcoes.includes(p.escala)) {
+        if (!p.opcoes || p.opcoes.length === 0) {
+          setError(`Pergunta "${p.texto}" precisa de pelo menos 1 opção`);
+          return;
+        }
+        if (p.opcoes.some((o) => !o.label.trim())) {
+          setError(`Pergunta "${p.texto}" tem opção em branco`);
+          return;
+        }
+      }
     }
 
     setSaving(true);
@@ -309,48 +355,134 @@ function FormularioDialog({
               </p>
             ) : (
               <div className="space-y-2">
-                {form.perguntas.map((p, idx) => (
-                  <div
-                    key={p.id}
-                    className="flex items-start gap-2 rounded-md border bg-muted/30 p-3"
-                  >
-                    <span className="mt-2 text-xs font-medium text-muted-foreground">
-                      {idx + 1}.
-                    </span>
-                    <div className="flex flex-1 flex-col gap-2 sm:flex-row">
-                      <Input
-                        value={p.texto}
-                        onChange={(e) =>
-                          updatePergunta(idx, { texto: e.target.value })
-                        }
-                        placeholder="Texto da pergunta"
-                        className="flex-1"
-                      />
-                      <select
-                        value={p.escala}
-                        onChange={(e) =>
-                          updatePergunta(idx, {
-                            escala: e.target.value as Escala,
-                          })
-                        }
-                        className="flex h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:w-40"
-                      >
-                        <option value="1-5">Escala 1-5</option>
-                        <option value="sim_nao">Sim / Nao</option>
-                        <option value="texto">Texto livre</option>
-                      </select>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => removePergunta(idx)}
-                      className="text-muted-foreground hover:text-red-600"
+                {form.perguntas.map((p, idx) => {
+                  const comOpcoes = escalasComOpcoes.includes(p.escala);
+                  return (
+                    <div
+                      key={p.id}
+                      className="flex flex-col gap-2 rounded-md border bg-muted/30 p-3"
                     >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                ))}
+                      <div className="flex items-start gap-2">
+                        <span className="mt-2 text-xs font-medium text-muted-foreground">
+                          {idx + 1}.
+                        </span>
+                        <div className="flex flex-1 flex-col gap-2 sm:flex-row">
+                          <Input
+                            value={p.texto}
+                            onChange={(e) =>
+                              updatePergunta(idx, { texto: e.target.value })
+                            }
+                            placeholder="Texto da pergunta"
+                            className="flex-1"
+                          />
+                          <select
+                            value={p.escala}
+                            onChange={(e) => {
+                              const novaEscala = e.target.value as Escala;
+                              const precisaOpcoes = escalasComOpcoes.includes(novaEscala);
+                              updatePergunta(idx, {
+                                escala: novaEscala,
+                                opcoes: precisaOpcoes
+                                  ? p.opcoes ?? [{ id: newOpcaoId(), label: "" }]
+                                  : undefined,
+                                maxSelecoes: novaEscala === "multi_choice" ? p.maxSelecoes ?? 3 : undefined,
+                                min: novaEscala === "numerico" ? p.min ?? 0 : undefined,
+                                max: novaEscala === "numerico" ? p.max ?? 10 : undefined,
+                              });
+                            }}
+                            className="flex h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:w-48"
+                          >
+                            {(Object.keys(escalasLabels) as Escala[]).map((k) => (
+                              <option key={k} value={k}>{escalasLabels[k]}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => removePergunta(idx)}
+                          className="text-muted-foreground hover:text-red-600"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+
+                      {p.escala === "multi_choice" && (
+                        <div className="ml-6 flex items-center gap-2 text-xs">
+                          <Label htmlFor={`max-${p.id}`}>Máximo seleções:</Label>
+                          <Input
+                            id={`max-${p.id}`}
+                            type="number"
+                            min={1}
+                            value={p.maxSelecoes ?? ""}
+                            onChange={(e) => updatePergunta(idx, { maxSelecoes: Number(e.target.value) || undefined })}
+                            className="h-8 w-20"
+                          />
+                        </div>
+                      )}
+
+                      {p.escala === "numerico" && (
+                        <div className="ml-6 flex items-center gap-2 text-xs">
+                          <Label htmlFor={`min-${p.id}`}>Min:</Label>
+                          <Input id={`min-${p.id}`} type="number" value={p.min ?? ""} onChange={(e) => updatePergunta(idx, { min: e.target.value === "" ? undefined : Number(e.target.value) })} className="h-8 w-20" />
+                          <Label htmlFor={`max-${p.id}`}>Max:</Label>
+                          <Input id={`max-${p.id}`} type="number" value={p.max ?? ""} onChange={(e) => updatePergunta(idx, { max: e.target.value === "" ? undefined : Number(e.target.value) })} className="h-8 w-20" />
+                        </div>
+                      )}
+
+                      {comOpcoes && (
+                        <div className="ml-6 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-xs">Opções</Label>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                updatePergunta(idx, {
+                                  opcoes: [...(p.opcoes ?? []), { id: newOpcaoId(), label: "" }],
+                                })
+                              }
+                            >
+                              <Plus className="mr-1 h-3 w-3" /> Opção
+                            </Button>
+                          </div>
+                          <div className="space-y-1">
+                            {(p.opcoes ?? []).map((o, oi) => (
+                              <div key={o.id} className="flex gap-2">
+                                <span className="mt-2 text-xs text-muted-foreground">{oi + 1})</span>
+                                <Input
+                                  value={o.label}
+                                  onChange={(e) => {
+                                    const novas = [...(p.opcoes ?? [])];
+                                    novas[oi] = { ...o, label: e.target.value };
+                                    updatePergunta(idx, { opcoes: novas });
+                                  }}
+                                  placeholder="Label da opção"
+                                  className="h-8 flex-1"
+                                />
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  onClick={() =>
+                                    updatePergunta(idx, {
+                                      opcoes: (p.opcoes ?? []).filter((_, i) => i !== oi),
+                                    })
+                                  }
+                                  className="text-muted-foreground hover:text-red-600"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
