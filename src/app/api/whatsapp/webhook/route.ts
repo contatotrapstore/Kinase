@@ -515,6 +515,18 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Detecta callbacks de status da Z-API antes de logar — permite alertar quando
+    // a instância perde a sessão do WhatsApp (bot fica mudo até re-parear via QR).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bodyRec = body as Record<string, any>;
+    const zapiType = typeof bodyRec?.type === "string" ? bodyRec.type : null;
+    const isDisconnected = zapiType === "DisconnectedCallback";
+    if (isDisconnected) {
+      console.error(
+        `[webhook] 🚨 Z-API DESCONECTADA — instância ${bodyRec?.instanceId ?? "?"}, erro="${bodyRec?.error ?? ""}". Re-pareie via QR code no painel Z-API.`,
+      );
+    }
+
     // Persistir TODA mensagem recebida em whatsapp_log (sucesso ou ignorada)
     // Permite diagnosticar bugs como "bot não responde" investigando payloads reais
     try {
@@ -524,10 +536,16 @@ export async function POST(request: NextRequest) {
         raw_payload: body,
         parsed_phone: message?.from ?? null,
         parsed_text: message?.text ?? null,
-        action: message && message.text ? "received" : "ignored_no_message",
-        details: !message || !message.text
-          ? "Payload não reconhecido pelo parser nem pelo fallback"
-          : null,
+        action: isDisconnected
+          ? "zapi_disconnected"
+          : message && message.text
+            ? "received"
+            : "ignored_no_message",
+        details: isDisconnected
+          ? `Z-API desconectada: ${bodyRec?.error ?? "sem detalhes"}. Precisa re-parear.`
+          : !message || !message.text
+            ? "Payload não reconhecido pelo parser nem pelo fallback"
+            : null,
       });
     } catch (logErr) {
       // Log persistence failure não pode quebrar o webhook

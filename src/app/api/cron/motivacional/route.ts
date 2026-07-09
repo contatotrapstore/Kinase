@@ -30,10 +30,10 @@ export async function GET() {
     const supabase = createServiceClient() as any;
 
     // Invocado por Supabase pg_cron 2x/dia (14h e 22h UTC = 11h e 19h Brasília).
-    // Throttle: 1 mensagem por user a cada 12h (evita 2x no mesmo dia se rede falhar).
+    // Throttle 22h: garante ≤1 envio/24h por user; o 2º cron do dia serve só como retry se o 1º falhar.
     const nowUtc = new Date();
     const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const cutoffEnvio = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+    const cutoffEnvio = new Date(Date.now() - 22 * 60 * 60 * 1000).toISOString();
 
     const { data: stale, error: queryErr } = await supabase
       .from("progresso_usuario")
