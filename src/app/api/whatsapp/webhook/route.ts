@@ -1370,17 +1370,20 @@ async function iniciarForm(
   // Persiste em usuarios.awaiting_form pra restaurar entre invocações serverless
   await supabase.from('usuarios').update({ awaiting_form: awaiting }).eq('id', userId);
 
-  await enviarProximaPerguntaForm(adapter, phone, awaiting);
+  await enviarProximaPerguntaForm(adapter, phone, awaiting, userId);
 }
 
 async function enviarProximaPerguntaForm(
   adapter: WhatsAppAdapter,
   phone: string,
   form: AwaitingForm,
+  userId: string,
 ): Promise<void> {
   const p = form.perguntas[form.perguntaIndex];
   const total = form.perguntas.length;
   const pos = form.perguntaIndex + 1;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const supabase = createServiceClient() as any;
 
   // Top3: cada chamada renderiza a próxima posição (1ª, 2ª, 3ª) com opções restantes.
   if (p.escala === 'top3' && form.topRanking) {
@@ -1391,6 +1394,7 @@ async function enviarProximaPerguntaForm(
       phone,
       `*${pos}/${total}* — ${p.texto}\n\n${ordinal} mais importante:\n${listaNum}\n\n_Responda com o número._`,
     );
+    await supabase.from('usuarios').update({ awaiting_form: form }).eq('id', userId);
     return;
   }
 
@@ -1428,9 +1432,9 @@ async function enviarProximaPerguntaForm(
       break;
     }
     case 'top3': {
-      // Primeira chamada: ainda sem state — inicializa.
-      // (a renderização real acontece no branch top3 acima na próxima invocação,
-      // que é onde sempre cai depois do init.)
+      // Primeira chamada: ainda sem state — inicializa e PERSISTE (crítico pra serverless
+      // — próxima invocação hidrata awaiting_form do banco, sem topRanking o handler
+      // cai no validador e retorna "Tipo não suportado").
       form.topRanking = { perguntaId: p.id, posicao: 1, escolhidasIds: [] };
       const restantes = p.opcoes ?? [];
       const listaNum = restantes.map((o, i) => `*${i + 1})* ${o.label}`).join('\n');
@@ -1438,11 +1442,14 @@ async function enviarProximaPerguntaForm(
         phone,
         `*${pos}/${total}* — ${p.texto}\n\nManda primeiro a *mais importante*:\n${listaNum}\n\n_Responda com o número._`,
       );
+      await supabase.from('usuarios').update({ awaiting_form: form }).eq('id', userId);
       return;
     }
   }
 
   await adapter.sendText(phone, `*${pos}/${total}* — ${p.texto}${listaOpcoes}${instrucao}`);
+  // Persiste awaiting_form (perguntaIndex/respostasParciais) pra sobreviver serverless
+  await supabase.from('usuarios').update({ awaiting_form: form }).eq('id', userId);
 }
 
 async function handleFormAnswer(
@@ -1454,6 +1461,14 @@ async function handleFormAnswer(
   if (!session?.awaitingForm) return;
   const form = session.awaitingForm;
   const perguntaAtual = form.perguntas[form.perguntaIndex];
+
+  // Fallback auto-corretivo: se pergunta atual é top3 mas topRanking está null (estado
+  // perdido em migration/serverless race), reinicializa mandando a 1ª de novo em vez
+  // de cair no validador que retornaria "Tipo não suportado".
+  if (perguntaAtual.escala === 'top3' && !form.topRanking) {
+    await enviarProximaPerguntaForm(adapter, phone, form, session.user.id);
+    return;
+  }
 
   // top3: cada resposta é UMA posição. Após 3 escolhas, grava array e avança.
   if (perguntaAtual.escala === 'top3' && form.topRanking) {
@@ -1472,9 +1487,7 @@ async function handleFormAnswer(
     form.topRanking.escolhidasIds.push(restantes[i - 1].id);
     if (form.topRanking.posicao < 3 && form.topRanking.escolhidasIds.length < (perguntaAtual.opcoes?.length ?? 0)) {
       form.topRanking.posicao = (form.topRanking.posicao + 1) as 1 | 2 | 3;
-      const supabaseTop = createServiceClient() as any;
-      await supabaseTop.from('usuarios').update({ awaiting_form: form }).eq('id', session.user.id);
-      await enviarProximaPerguntaForm(adapter, phone, form);
+      await enviarProximaPerguntaForm(adapter, phone, form, session.user.id);
       return;
     }
     // Concluiu o top3
@@ -1534,9 +1547,9 @@ async function handleFormAnswer(
     .update({ respostas: form.respostasParciais })
     .eq('formulario_id', form.formularioId)
     .eq('usuario_id', session.user.id);
-  await supabase.from('usuarios').update({ awaiting_form: form }).eq('id', session.user.id);
 
-  await enviarProximaPerguntaForm(adapter, phone, form);
+  // enviarProximaPerguntaForm persiste awaiting_form (com topRanking se aplicável) por dentro
+  await enviarProximaPerguntaForm(adapter, phone, form, session.user.id);
 }
 
 /**

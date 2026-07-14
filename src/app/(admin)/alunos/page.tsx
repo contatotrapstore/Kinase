@@ -22,7 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Users, Search, Loader2, Pencil } from "lucide-react";
+import { Users, Search, Loader2, Pencil, Plus } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 type UserStatus = "ativo" | "inativo";
@@ -74,6 +74,65 @@ export default function AlunosPage() {
   const [outroValor, setOutroValor] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Adicionar aluno manualmente (pra pré-cadastrar participantes do experimento)
+  const [addOpen, setAddOpen] = useState(false);
+  const [addPhone, setAddPhone] = useState("");
+  const [addName, setAddName] = useState("");
+  const [addGrupo, setAddGrupo] = useState<string>(SEM_GRUPO);
+  const [addOutro, setAddOutro] = useState("");
+  const [addSaving, setAddSaving] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [addSuccess, setAddSuccess] = useState<string | null>(null);
+
+  function resetAddForm() {
+    setAddPhone("");
+    setAddName("");
+    setAddGrupo(SEM_GRUPO);
+    setAddOutro("");
+    setAddError(null);
+    setAddSuccess(null);
+  }
+
+  async function handleAdd() {
+    setAddError(null);
+    setAddSuccess(null);
+    if (!addPhone.trim()) {
+      setAddError("Telefone obrigatório");
+      return;
+    }
+    const grupoValue =
+      addGrupo === SEM_GRUPO
+        ? null
+        : addGrupo === OUTRO
+          ? addOutro.trim() || null
+          : addGrupo;
+    setAddSaving(true);
+    try {
+      const res = await fetch("/api/alunos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: addPhone.trim(),
+          name: addName.trim() || undefined,
+          grupo_experimental: grupoValue,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? "Falha ao adicionar");
+      setAddSuccess(json.created ? "Aluno cadastrado!" : "Aluno já existia, atualizado.");
+      await fetchUsuarios();
+      // Reset após 1s pra feedback ficar visível
+      setTimeout(() => {
+        setAddOpen(false);
+        resetAddForm();
+      }, 1200);
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : "Erro");
+    } finally {
+      setAddSaving(false);
+    }
+  }
 
   async function fetchUsuarios() {
     try {
@@ -198,15 +257,89 @@ export default function AlunosPage() {
         </div>
       )}
 
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          placeholder="Buscar por nome ou telefone..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9"
-        />
+      <div className="flex items-center justify-between gap-3">
+        <div className="relative w-full max-w-sm">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Buscar por nome ou telefone..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        <Button onClick={() => { resetAddForm(); setAddOpen(true); }}>
+          <Plus className="mr-2 h-4 w-4" />
+          Novo aluno
+        </Button>
       </div>
+
+      <Dialog open={addOpen} onOpenChange={(v) => { setAddOpen(v); if (!v) resetAddForm(); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Adicionar aluno manualmente</DialogTitle>
+            <DialogDescription>
+              Pré-cadastra o médico antes do 1º /start. Pré-teste será acionado no primeiro contato dele com o bot.
+            </DialogDescription>
+          </DialogHeader>
+          {addError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{addError}</div>
+          )}
+          {addSuccess && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{addSuccess}</div>
+          )}
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="add-phone">Telefone (com DDD) *</Label>
+              <Input
+                id="add-phone"
+                value={addPhone}
+                onChange={(e) => setAddPhone(e.target.value)}
+                placeholder="ex: 27 99613-2820 ou +55 27 99613-2820"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="add-name">Nome (opcional)</Label>
+              <Input
+                id="add-name"
+                value={addName}
+                onChange={(e) => setAddName(e.target.value)}
+                placeholder="Nome do médico"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="add-grupo">Grupo experimental</Label>
+              <select
+                id="add-grupo"
+                value={addGrupo}
+                onChange={(e) => setAddGrupo(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                <option value={SEM_GRUPO}>Sem grupo</option>
+                {GRUPO_PRESETS.map((g) => (
+                  <option key={g} value={g}>{g}</option>
+                ))}
+                <option value={OUTRO}>Outro...</option>
+              </select>
+              {addGrupo === OUTRO && (
+                <Input
+                  value={addOutro}
+                  onChange={(e) => setAddOutro(e.target.value)}
+                  placeholder="Ex: piloto, beta"
+                />
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setAddOpen(false); resetAddForm(); }} disabled={addSaving}>
+              Cancelar
+            </Button>
+            <Button onClick={handleAdd} disabled={addSaving}>
+              {addSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Adicionar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Card>
         <CardHeader>
