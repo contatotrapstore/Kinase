@@ -42,9 +42,70 @@ export function helpMessage(): string {
     '/ranking — Ver ranking comparativo',
     '/progresso — Ver seu progresso atual',
     '/ajuda ou /help — Ver esta mensagem',
+    'SAIR — Apagar seus dados e parar de receber mensagens',
     '',
     '*Para responder questões:*',
     'Envie apenas a letra da alternativa: *A*, *B*, *C* ou *D*',
+  ].join('\n');
+}
+
+/**
+ * Primeiro passo do opt-out (LGPD art. 18). Explica o alcance da exclusão e pede
+ * confirmação — não apaga nada. A exclusão só ocorre com "SAIR CONFIRMO".
+ */
+export function exitConfirmMessage(): string {
+  return [
+    '*Você pediu para sair.*',
+    '',
+    'Se confirmar, apagamos tudo o que temos de você: seu número, suas respostas,',
+    'seu progresso e o histórico das suas mensagens.',
+    '',
+    '*Isso não tem volta.* Não guardamos cópia e não conseguimos restaurar depois.',
+    '',
+    'Para confirmar, envie: *SAIR CONFIRMO*',
+    'Para continuar estudando, é só responder a próxima questão.',
+  ].join('\n');
+}
+
+/**
+ * Exclusão concluída com sucesso.
+ */
+export function exitDoneMessage(): string {
+  return [
+    '*Pronto. Seus dados foram apagados.*',
+    '',
+    'Não temos mais nenhum registro seu e você não receberá mais mensagens.',
+    '',
+    'Se um dia quiser voltar, envie */start* — recomeçamos do zero.',
+    'Obrigado por ter participado.',
+  ].join('\n');
+}
+
+/**
+ * Conta apagada, mas o histórico bruto de mensagens permaneceu. Quem pediu exclusão
+ * precisa saber que ficou uma parte, e como cobrar o resto.
+ */
+export function exitPartialMessage(): string {
+  return [
+    '*Sua conta foi apagada* e você não receberá mais mensagens.',
+    '',
+    'Uma parte do histórico de mensagens não pôde ser removida agora.',
+    'Responda a este número pedindo a exclusão do histórico, ou escreva para o',
+    'nosso contato de privacidade — vamos concluir manualmente.',
+  ].join('\n');
+}
+
+/**
+ * Falha no meio da exclusão. Pode ter apagado parte — não afirmar que nada saiu,
+ * nem que tudo saiu. Reenviar SAIR CONFIRMO retoma de onde parou.
+ */
+export function exitFailedMessage(): string {
+  return [
+    '*Não conseguimos concluir a exclusão agora.*',
+    '',
+    'Parte dos seus dados pode já ter sido apagada, e o pedido não se perdeu.',
+    'Envie *SAIR CONFIRMO* de novo em alguns minutos — retomamos de onde parou.',
+    'Se continuar falhando, escreva para o nosso contato de privacidade.',
   ].join('\n');
 }
 
