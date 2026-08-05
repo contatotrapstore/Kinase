@@ -20,6 +20,10 @@ import {
   invalidDifficultyMessage,
   rankingMessage,
   progressMessage,
+  exitConfirmMessage,
+  exitDoneMessage,
+  exitPartialMessage,
+  exitFailedMessage,
 } from "@/lib/whatsapp/messages";
 import { saveSession, loadSession, completeSession, type AwaitingDifficulty } from "@/lib/whatsapp/session-store";
 
@@ -637,6 +641,22 @@ export async function POST(request: NextRequest) {
     // --- 2. Route to command or answer handler ---
     const command = text.toLowerCase();
 
+    // Opt-out (LGPD art. 18). Precisa vir ANTES dos guards de formulário, feedback e nota:
+    // eles capturam qualquer texto sem "/", e "sair" viraria resposta da pergunta atual.
+    // Dois passos de propósito — a exclusão é irreversível e não pode disparar por engano.
+    //
+    // Normaliza local em vez de usar `command`: é direito que a lei manda exercer sem
+    // obstáculo, então espaço sobrando, espaço duplo e "SAIR, CONFIRMO" têm de funcionar.
+    const optOut = text.trim().toLowerCase().replace(/[.,;!]/g, "").replace(/\s+/g, " ");
+    if (optOut === "sair" || optOut === "/sair") {
+      await adapter.sendText(phone, exitConfirmMessage());
+      return NextResponse.json({ success: true });
+    }
+    if (optOut === "sair confirmo" || optOut === "/sair confirmo") {
+      await handleExit(adapter, phone);
+      return NextResponse.json({ success: true });
+    }
+
     // Formulário pré/pós-teste em andamento (qualquer texto vira resposta da pergunta atual)
     const sessForm = sessions.get(phone);
     if (sessForm?.awaitingForm && !command.startsWith('/')) {
@@ -822,6 +842,80 @@ async function handleRestart(
   sessions.delete(phone);
   await adapter.sendText(phone, "*Progresso zerado.* Iniciando do começo...");
   await handleStart(adapter, phone);
+}
+
+/**
+ * Handles "SAIR CONFIRMO" — exclusão definitiva a pedido do titular (LGPD art. 18).
+ *
+ * Apaga na ordem das dependências: primeiro os filhos por usuario_id, depois o próprio
+ * usuário, e por último o log bruto, que é chaveado por telefone e já contém a mensagem
+ * "SAIR CONFIRMO" gravada no início deste mesmo POST.
+ *
+ * Não registra contador de desistência: o número de saídas é a diferença entre a lista de
+ * convidados que os sócios mantêm e as linhas presentes no export. Guardar o registro de
+ * quem saiu contradiria o pedido que ele acabou de fazer.
+ */
+async function handleExit(
+  adapter: WhatsAppAdapter,
+  phone: string,
+): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const supabase = createServiceClient() as any;
+
+  // Busca sem criar — getOrCreateUser inseriria uma linha só para apagá-la em seguida.
+  const { data: user } = await supabase
+    .from("usuarios")
+    .select("id")
+    .eq("phone", phone)
+    .maybeSingle();
+
+  if (!user) {
+    sessions.delete(phone);
+    await adapter.sendText(phone, exitDoneMessage());
+    return;
+  }
+
+  const tabelasPorUsuario = [
+    "respostas",
+    "progresso_usuario",
+    "rankings",
+    "motivacional_envios",
+    "block_feedback",
+    "formularios_respostas",
+  ];
+
+  for (const tabela of tabelasPorUsuario) {
+    const { error } = await supabase.from(tabela).delete().eq("usuario_id", user.id);
+    if (error) {
+      console.error(`[webhook] SAIR: falha ao apagar ${tabela}:`, error);
+      await adapter.sendText(phone, exitFailedMessage());
+      return;
+    }
+  }
+
+  const { error: errUsuario } = await supabase.from("usuarios").delete().eq("id", user.id);
+  if (errUsuario) {
+    console.error("[webhook] SAIR: falha ao apagar usuarios:", errUsuario);
+    await adapter.sendText(phone, exitFailedMessage());
+    return;
+  }
+
+  sessions.delete(phone);
+
+  const { error: errLog } = await supabase
+    .from("whatsapp_log")
+    .delete()
+    .eq("parsed_phone", phone);
+
+  if (errLog) {
+    // A conta já foi apagada, mas o histórico bruto de mensagens ficou. Não dá para
+    // dizer que acabou — quem pediu exclusão precisa saber que falta uma parte.
+    console.error("[webhook] SAIR: falha ao apagar whatsapp_log:", errLog);
+    await adapter.sendText(phone, exitPartialMessage());
+    return;
+  }
+
+  await adapter.sendText(phone, exitDoneMessage());
 }
 
 /**
